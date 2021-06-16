@@ -10,6 +10,7 @@ import warnings
 warnings.filterwarnings("ignore") # specify to ignore warning messages
 from statsmodels.tsa.arima_model import ARIMA 
 import statsmodels.api as sm
+from tsmoothie.smoother import LowessSmoother
 
 
 
@@ -103,27 +104,6 @@ def plotseasonal(res, axes):
     axes[3].set_ylabel('Residual')
 
 
-
-def get_ARIMA_params(data, pdq, s):
-    p = d = q = range(0, 3)
-    seasonal_pdq = [(x[0], x[1], x[2], s) for x in list(itertools.product(p, d, q))]
-    score_aic = 1000000.0
-    warnings.filterwarnings("ignore") # specify to ignore warning messages
-    for param_seasonal in seasonal_pdq:
-        mod = sm.tsa.statespace.SARIMAX(data,
-                                        order=pdq,
-                                        seasonal_order=param_seasonal,
-                                        enforce_stationarity=False,
-                                        enforce_invertibility=False)
-        results = mod.fit()
-        if results.aic < score_aic:
-            score_aic = results.aic
-            params = param_seasonal, results.aic
-    param_seasonal, results.aic = params
-    print('x{}12 - AIC:{}'.format(param_seasonal, results.aic))
-    return param_seasonal
-
-
 def rmse(pred, obs):
     return np.sqrt(sum((pred-obs)**2)/pred.shape[0])
 
@@ -141,3 +121,36 @@ def plot_trace(data, fields):
         paper_bgcolor="LightSteelBlue",
     )
     fig.show()
+
+
+def plot_train_history(history):
+    plt.plot(history.history['loss'])
+    plt.plot(history.history['val_loss'])
+    plt.title('model loss')
+    plt.ylabel('loss')
+    plt.xlabel('epoch')
+    plt.legend(['train', 'val'], loc='best')
+    plt.show()
+
+
+"""
+LowessSmoother uses LOWESS (locally-weighted scatterplot smoothing)
+to smooth the timeseries. This smoothing technique is a non-parametric
+regression method that essentially fit a unique linear regression
+for every data point by including nearby data points to estimate
+the slope and intercept. The presented method is robust because it
+performs residual-based reweightings simply specifing the number of
+iterations to operate.
+"""
+def lowess_smoother(df):
+    """
+    :param df: a pandas dataframe
+    :return: smoother object
+    """
+    sds = df.values
+    # set the smooth_fraction to 1 day
+    days = df.index[-1] - df.index[0]
+    frac = 1 / days.days
+    smoother = LowessSmoother(smooth_fraction=frac, iterations=1)
+    smoother.smooth(sds)
+    return smoother
