@@ -4,7 +4,7 @@
 
 This framework will be deployed in a Kubernetes cluster on the Chameleon Cloud. All components will be run as containers.
 
-![arch](arch.png)
+![arch](design/arch.png)
 
 
 

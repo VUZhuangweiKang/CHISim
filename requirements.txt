@@ -4,3 +4,5 @@ plotly
 pyanom
 pandas
 numpy
+pika
+influxdb
