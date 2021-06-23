@@ -8,13 +8,11 @@ import argparse
 from enum import Enum
 from influxdb import InfluxDBClient
 
-dbs_conn = None
+dbs_connection = None
 db_client = None
-rsc_sch_channel = None
-
-req_frcst_channel = None
+frontend_channel = None
 lock = Lock()
-predict_window = deque(maxlen=1000)
+predict_window = None
 
 
 class RequestType(Enum):
@@ -23,6 +21,7 @@ class RequestType(Enum):
 
 
 def dump_usr_request(ch, method, properties, body):
+    global predict_window
     usr_request = json.loads(body.decode())
     create_at_time_obj = datetime.strptime(usr_request['create_at'], '%Y-%m-%d %H:%M:%S')
     start_on_time_obj = datetime.strptime(usr_request['start_on'], '%Y-%m-%d %H:%M:%S')
@@ -41,14 +40,15 @@ def dump_usr_request(ch, method, properties, body):
     db_client.write_points(json_body)
 
     if request_type == RequestType.IN_ADVANCE:
-        dbs.emit_msg(exchange='chameleon_user', routing_key='in_advance_request', payload=json.dumps(usr_request), channel=rsc_sch_channel, connection=dbs_conn)
+        dbs.emit_msg(exchange='frontend', routing_key='in_advance_request', payload=json.dumps(usr_request), channel=frontend_channel, connection=dbs_connection)
     elif request_type == RequestType.ON_DEMAND:
         with lock.acquire():
             if len(predict_window) > 0:
-                left = predict_window.popleft()
-                if usr_request['node_cnt'] > left['node_cnt']:
-                    dbs.emit_msg(exchange='chameleon_user', routing_key='update_on_demand_request', payload=json.dumps(usr_request), channel=rsc_sch_channel, connection=dbs_conn)
-        dbs.emit_msg(exchange='chameleon_user', routing_key='on_demand_request', payload=json.dumps(usr_request), channel=req_frcst_channel, connection=dbs_conn)
+                if usr_request['node_cnt'] > predict_window.popleft()['node_cnt']:
+                    dbs.emit_msg(exchange='frontend', routing_key='update_on_demand_request',
+                                 payload=json.dumps(usr_request), channel=frontend_channel, connection=dbs_connection)
+        dbs.emit_msg(exchange='frontend', routing_key='on_demand_request', payload=json.dumps(usr_request),
+                     channel=frontend_channel, connection=dbs_connection)
 
 
 def evaluate(ch, method, properties, body):
@@ -59,28 +59,31 @@ def evaluate(ch, method, properties, body):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--sw', default=1000, type=int, help='slide window size')
+    parser.add_argument('--fs', default=1000, type=int, help='forward steps')
     args = parser.parse_args()
+    predict_window = deque(maxlen=args.fs)
 
     with open('influxdb.json') as f:
         db_info = json.load(f)
     db_client = InfluxDBClient(*db_info)
 
-    dbs_conn = dbs.init_connection()
-    rsc_sch_channel = dbs_conn.channel(channel_number=1)
-    req_frcst_channel = dbs_conn.channel(channel_number=2)
+    dbs_connection = dbs.init_connection()
+    # producers
+    frontend_channel = dbs_connection.channel(channel_number=1)
+    dbs.queue_bind(frontend_channel, exchange='frontend', queues=['internal'])
 
+    # consumers
     user_event_handler = threading.Thread(name='user_request_handler',
                                           target=dbs.consume,
-                                          args=('chameleon_user', 'user_requests', 'raw_request', dump_usr_request))
-    feedback_handler = threading.Thread(name='user_request_handler',
+                                          args=('frontend', 'user_requests', 'raw_request', dump_usr_request, dbs_connection))
+    feedback_handler = threading.Thread(name='feedback_handler',
                                           target=dbs.consume,
-                                          args=('chameleon_user', 'forecaster_feedback', 'predicted_request', evaluate))
+                                          args=('frontend', 'internal', 'predicted_request', evaluate, dbs_connection))
     user_event_handler.start()
     feedback_handler.start()
     user_event_handler.join()
     feedback_handler.join()
-    dbs_conn.close()
+    dbs_connection.close()
 
 
 

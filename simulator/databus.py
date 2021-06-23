@@ -61,6 +61,11 @@ def emit_timeseries(exchange, routing_key, payload, index_col, scale_ratio=1, co
     connection.close()
 
 
+def queue_bind(channel, exchange, queues):
+    for q in queues:
+        channel.queue_bind(exchange=exchange, queue=q)
+
+
 def consume(exchange, queue, binding_key, callback, connection=None, channel=None):
     if not connection:
         connection = init_connection()

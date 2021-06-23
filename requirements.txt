@@ -6,3 +6,6 @@ pandas
 numpy
 pika
 influxdb
+tsmoothie
+keras
+tensorflow_probability
