@@ -8,4 +8,4 @@ pika
 influxdb
 tsmoothie
 keras
-tensorflow_probability
+flask

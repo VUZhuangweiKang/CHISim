@@ -1,7 +1,8 @@
 import pandas as pd
 import time
 import signal
-import os, json
+import os
+import json, pickle
 import pika
 from pika.exchange_type import ExchangeType
 
@@ -32,7 +33,7 @@ def emit_msg(exchange, routing_key, payload, connection=None, channel=None, clos
         exchange=exchange,
         routing_key=routing_key,
         body=payload.encode(),
-        properties=pika.BasicProperties(content_type='application/json', delivery_mode=1)
+        properties=pika.BasicProperties(delivery_mode=1)
     )
     if close_connection:
         connection.close()
@@ -49,14 +50,13 @@ def emit_timeseries(exchange, routing_key, payload, index_col, scale_ratio=1, co
         df.set_index(index_col, inplace=True)
         pre_timestamp = pd.Timestamp.now()
         for index, row in df.iterrows():
-            message_body = row.to_json()
-            sleep_sec = (message_body.index - pre_timestamp).total_seconds()
+            sleep_sec = (row.index - pre_timestamp).total_seconds()
             time.sleep(sleep_sec / scale_ratio)
             channel.basic_publish(
                 exchange=exchange,
                 routing_key=routing_key,
-                body=json.dumps(message_body).encode(),
-                properties=pika.BasicProperties(content_type='application/json', delivery_mode=1)
+                body=pickle.dumps(row.to_frame()),
+                properties=pika.BasicProperties(delivery_mode=1)
             )
     connection.close()
 
