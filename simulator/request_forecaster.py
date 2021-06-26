@@ -6,9 +6,17 @@ import argparse
 import threading
 from tensorflow import keras
 from utils import *
+from enum import Enum
+
+
+class InternalQueueFilter(Enum):
+    DO_UPDATE_FORECASTER = 'do_update_forecaster'
+    ON_DEMAND_REQUEST = 'on_demand_request'
 
 
 def predict_requests(ch, method, properties, body):
+    if properties['header']['key'] != InternalQueueFilter.ON_DEMAND_REQUEST:
+        return
     global sw_start_time
     request = pickle.loads(body)
     if len(slide_window) == 0:
@@ -26,6 +34,8 @@ def predict_requests(ch, method, properties, body):
 
 
 def update_forecaster(ch, method, properties, body):
+    if properties['header']['key'] != InternalQueueFilter.DO_UPDATE_FORECASTER:
+        return
     global forecaster
     if body.decode() == 'do update forecaster':
         forecaster = keras.models.load_model('forecaster')

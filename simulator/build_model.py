@@ -14,6 +14,11 @@ import numpy as np
 from datetime import datetime
 from utils import *
 import json
+from enum import Enum
+
+
+class InternalQueueFilter(Enum):
+    UPDATE_FORECASTER = 'update_forecaster'
 
 
 def create_lstm_dataset(ds, lb=1):
@@ -37,7 +42,7 @@ def loss_function(y_true, y_pred):
 
 
 def train_model(ch, method, properties, body):
-    if body.decode() != 'update forecaster':
+    if properties['header']['key'] != InternalQueueFilter.UPDATE_FORECASTER:
         return
     query_str = 'select * from on_demand'
     df = db_client.query(query_str).get_points()
@@ -115,7 +120,7 @@ if __name__ == '__main__':
     build_model_channel = dbs_connection.channel()
 
     listen_frontend = threading.Thread(name='listen_frontend', target=dbs.consume,
-                                       args=('build_model', 'user_requests', 'update_forecaster', train_model, dbs_connection))
+                                       args=('build_model', 'internal', 'update_forecaster', train_model, dbs_connection))
     listen_frontend.start()
     listen_frontend.join()
     dbs_connection.close()

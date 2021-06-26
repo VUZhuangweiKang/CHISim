@@ -33,7 +33,7 @@ def emit_msg(exchange, routing_key, payload, connection=None, channel=None, clos
         exchange=exchange,
         routing_key=routing_key,
         body=payload.encode(),
-        properties=pika.BasicProperties(delivery_mode=1)
+        properties=pika.BasicProperties(delivery_mode=1, headers={'key': routing_key})
     )
     if close_connection:
         connection.close()
@@ -56,7 +56,7 @@ def emit_timeseries(exchange, routing_key, payload, index_col, scale_ratio=1, co
                 exchange=exchange,
                 routing_key=routing_key,
                 body=pickle.dumps(row.to_frame()),
-                properties=pika.BasicProperties(delivery_mode=1)
+                properties=pika.BasicProperties(delivery_mode=1, headers={'key': routing_key})
             )
     connection.close()
 
