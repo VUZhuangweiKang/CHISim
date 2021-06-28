@@ -1,7 +1,7 @@
 import databus as dbs
 from flask import Flask
 import json
-from influxdb import DataFrameClient
+import pymongo
 import argparse
 import threading
 import pickle
@@ -11,53 +11,48 @@ from flask import request
 app = Flask(__name__)
 
 
-def assign(node_type, node_cnt):
-    query_str = 'SELECT * FROM "resource_pool" WHERE "node_type" = "%s" ORDER BY "timestamp" DESC LIMIT 1' % node_type
-    results = db_client.query(query_str)
-    if results:
-        if results['available'] < node_cnt:
-            return False, node_cnt - results['available']
-        else:
-            results['available'] -= node_cnt
-            db_client.write_points(results, 'resource_pool')
-            return True, 0
+def assign(node_type, node_cnt, pool):
+    nodes = resource_pool.find({"$and": [{"node_type": node_type}, {"status": "free"}]}).limit(node_cnt)
+    if nodes.count() < node_cnt:
+        return False, node_cnt - nodes.count()
     else:
-        return False, 0
+        node_ids = [node['_id'] for node in nodes]
+        resource_pool.update_many(
+            {"_id": {"$in": node_ids}},
+            {"$set": {"status": "inuse", "pool": pool}}
+        )
+        return True, 0
 
 
 def release(node_type, node_cnt):
-    query_str = 'SELECT * FROM "resource_pool" WHERE "node_type" = "%s" ORDER BY "timestamp" DESC LIMIT 1' % node_type
-    results = db_client.query(query_str)
-    if results:
-        results['available'] += node_cnt
-        return True
+    nodes = resource_pool.find({"$and": [{"node_type": node_type}, {"status": "inuse"}]})
+    if nodes.count() < node_cnt:
+        return False, nodes.count()
     else:
-        return False
+        node_ids = [node['_id'] for node in nodes]
+        resource_pool.update_many(
+            {"_id": {"$in": node_ids}},
+            {"$set": {"status": "free", "pool": 'Chameleon'}}
+        )
+        return True, 0
 
 
 @app.route('/get_free_nodes', method='GET')
 def get_free_nodes():
     node_type = request.args.get('node_type')
-    query_str = 'SELECT LAST("available") FROM "resource_pool" WHERE "node_type" = "%s"' % node_type
-    results = db_client.query(query_str)
-    if results:
-        return 200, results['available']
-    else:
-        return 403, 'failed to query database'
+    free_nodes = resource_pool.find({"$and": [{"node_type": node_type}, {"status": "free"}]}).count()
+    return free_nodes
 
 
 # TODO: in-advance, on_demand_predict, on_demand_makeup均通过次acquire函数请求资源
 @app.route('/acquire_nodes', method='POST')
 def acquire_nodes():
     request_data = request.get_json()
-    results = assign(request_data['node_type'], request_data['node_count'])
+    results = assign(request_data['node_type'], request_data['node_count'], request_data['pool'])
     if results[0]:
         return 200, 'OK'
     else:
-        if results[1] == 0:
-            return 403, 'failed to acquire nodes'
-        else:
-            return 201, str(results[1])
+        return 201, str(results[1])
 
 
 @app.route('/release_nodes', method='POST')
@@ -67,41 +62,54 @@ def release_nodes():
     if results:
         return 200, 'OK'
     else:
-        return 403, 'failed to release nodes'
+        return 403, 'release node %d < available nodes %d' % (request_data['node_count'], results[1])
+
+
+@app.route('/preempt_nodes', method='POST')
+def preempt_nodes():
+    request_data = request.get_json()
+    resource_pool.update_many({"HOST_NAME (PHYSICAL)": {"$in": request_data['preempt_nodes']}},
+                              {"$set": {"status": "inuse", "pool": "Chameleon"}})
+    resource_pool.update_many({"$and": [{"node_type": request_data['node_type']}, {"status": "free"}]},
+                              {"$set": {"status": "inuse", "pool": "Chameleon"}})
 
 
 def process_machine_event(ch, method, properties, body):
     machine_event = pickle.loads(body)
-    node_type = machine_event['node_type']
-    query_str = 'SELECT * FROM "resource_pool" WHERE "node_type" = "%s" ORDER BY "timestamp" DESC LIMIT 1' % node_type
-    results = db_client.query(query_str)
+    machine_id = machine_event['HOST_NAME (PHYSICAL)']
+    machine = resource_pool.find_one({"HOST_NAME (PHYSICAL)": machine_id})
 
-    if machine_event['EVENT'] in ['ENABLE', 'UPDATE']:
-        if results:
-            results['available'] += 1
-            db_client.write_points(results, 'resource_pool')
-        else:
-            df = [{
-                'timestamp': machine_event['EVENT_TIME'],
-                'available': 1,
-                'node_type': machine_event['node_type']
-            }]
-            df = pd.DataFrame(df)
-            db_client.write_points(df, 'resource_pool')
+    if machine_event['EVENT'] in ['ENABLE']:
+        if not machine:
+            # parse node type
+            node_type = machine_event['PROPERTIES']
+            node_type = node_type.replace('\'', '\"')
+            node_type = node_type.replace('None', '\"None\"')
+            if 'node_type' in node_type:
+                machine_event['node_type'] = json.loads(node_type)['node_type']
+            else:
+                machine_event['node_type'] = None
+            machine_event['status'] = 'free'
+            machine_event['pool'] = 'Chameleon'
+            resource_pool.insert_one(machine_event)
     elif machine_event['EVENT'] in ['DISABLE']:
-        if results:
-            results['available'] -= 1
-            db_client.write_points(results, 'resource_pool')
+        if machine:
+            if machine['pool'] == 'OSG':
+                # TODO: machine is disabled by the Chameleon Operator
+                pass
+            resource_pool.update_one({"HOST_NAME (PHYSICAL)": machine_id},
+                                     {"$set": {"status": "inactive", "pool": "Chameleon"}})
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--host', type=str, help='host IP for running the resource manager')
+    parser.add_argument('--mongo', type=str, help='MongoDB connection URL')
     args = parser.parse_args()
 
-    with open('influxdb.json') as f:
-        db_info = json.load(f)
-    db_client = DataFrameClient(*db_info)
+    mongo_client = pymongo.MongoClient(args.mongo)
+    db = mongo_client['ChameleonSimulator']
+    resource_pool = db['resource_pool']
     app.run()
 
     dbs_connection = dbs.init_connection()
