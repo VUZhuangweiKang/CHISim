@@ -1,0 +1,5 @@
+lease_id,project_id,user_id,created_at,deleted_at,start_on,end_on,status,node_cnt,reserve_conditions,reserve_count_range,node_type
+1ec89b28cceeb29f2e4628f327a41ad6,273c67bff1d74021f9e1852a9a3c8fc0,f846bdc98852d8f822535d98bc31ccee,2016-11-23 13:49:40,2016-12-05 19:56:17,2016-11-23 13:51:00,2016-12-05 18:00:00,completed,39,"[""="", ""$node_type"", ""moonshot""]",39-39,moonshot
+e5c37c9ef8e1a9cb7f88618201bb00bc,d79a64ad06b4569c01b79595b62207fb,3a64e23985e1a931a725afd202a72c6a,2016-12-05 18:26:33,2016-12-15 20:12:54,2016-12-05 18:30:00,2016-12-21 18:00:00,completed,40,"[""="", ""$node_type"", ""moonshot""]",40-40,moonshot
+2ee0a8aa4c17e385a2092afdf1941662,273c67bff1d74021f9e1852a9a3c8fc0,f846bdc98852d8f822535d98bc31ccee,2016-12-15 20:14:35,2016-12-15 20:18:51,2016-12-15 20:15:00,2016-12-31 00:00:00,completed,24,"[""="", ""$node_type"", ""moonshot""]",24-24,moonshot
+224cebb4ac058dd0952a4d6ed5340f4c,d79a64ad06b4569c01b79595b62207fb,1063ea6d0366e258308b86ed3840f8cc,2016-12-15 20:19:05,2017-02-08 23:03:23,2016-12-15 20:20:00,2017-02-10 00:00:00,completed,24,"[""="", ""$node_type"", ""moonshot""]",24-24,moonshot

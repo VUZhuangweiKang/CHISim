@@ -1,0 +1,5 @@
+lease_id,project_id,user_id,created_at,deleted_at,start_on,end_on,status,node_cnt,reserve_conditions,reserve_count_range,node_type
+a6a8e6dea9f6487f60f36908cca5805b,a956639e292fd1679669a9507e4cd0c9,afc28f6eb85f9df952b87cd50a394431,2018-08-29 13:13:13,2018-08-31 17:58:40,2018-08-29 19:35:00,2018-08-31 23:00:00,active,1,"[""=="",""$node_type"",""fpga""]",1-1,fpga
+d6b46f0fe6c6c7f2b9e5c6ecdca777c8,a956639e292fd1679669a9507e4cd0c9,afc28f6eb85f9df952b87cd50a394431,2018-09-04 18:50:24,2018-09-05 19:37:00,2018-09-05 17:00:00,2018-09-07 23:00:00,active,1,"[""=="",""$node_type"",""fpga""]",1-1,fpga
+c004d4d2b01cdbbf83476514af5f5b8d,a956639e292fd1679669a9507e4cd0c9,afc28f6eb85f9df952b87cd50a394431,2018-09-07 13:23:28,2018-09-13 02:06:26,2018-09-10 13:00:00,2018-09-14 23:00:00,active,1,"[""=="",""$node_type"",""fpga""]",1-1,fpga
+d97ef4150c046c35f32c5b3c6a1eba1d,a956639e292fd1679669a9507e4cd0c9,afc28f6eb85f9df952b87cd50a394431,2018-10-25 16:35:34,2018-10-28 14:45:39,2018-10-27 16:36:00,2018-10-30 23:00:00,active,1,"[""=="",""$node_type"",""fpga""]",1-1,fpga

@@ -21,7 +21,7 @@ class ResourceScheduler:
         pass
 
     def handle_chameleon(self, ch, method, properties, body):
-        if properties['header']['key'] != 'schedule_resource':
+        if properties.headers['key'] != 'schedule_resource':
             return
         pred_requests = pickle.loads(body)
         for index, row in pred_requests.iterrows():
@@ -29,7 +29,7 @@ class ResourceScheduler:
                                json={'node_type': row['node_type'], 'node_cnt': row['node_cnt'], 'pool': 'Chameleon'})
             if rv.status_code == 200:
                 self.logger.info(msg='Acquire %d %s nodes successfully' % (row['node_cnt'], row['node_type']))
-            elif rv.status_code == 201:
+            elif rv.status_code == 202:
                 self.logger.info(
                     msg='Available nodes cannot satisfy predicted requests, %s more nodes are needed.' % rv.text)
                 terminate_nodes = self.terminator(row['node_type'], row['node_cnt'])

@@ -9,13 +9,8 @@ from utils import *
 from enum import Enum
 
 
-class InternalQueueFilter(Enum):
-    DO_UPDATE_FORECASTER = 'do_update_forecaster'
-    ON_DEMAND_REQUEST = 'on_demand_request'
-
-
 def predict_requests(ch, method, properties, body):
-    if properties['header']['key'] != InternalQueueFilter.ON_DEMAND_REQUEST:
+    if properties.headers['key'] != 'on_demand_request':
         return
     global sw_start_time
     request = pickle.loads(body)
@@ -34,7 +29,7 @@ def predict_requests(ch, method, properties, body):
 
 
 def update_forecaster(ch, method, properties, body):
-    if properties['header']['key'] != InternalQueueFilter.DO_UPDATE_FORECASTER:
+    if properties.headers['key'] != 'update_forecaster':
         return
     global forecaster
     if body.decode() == 'do update forecaster':
@@ -59,13 +54,8 @@ if __name__ == '__main__':
     dbs.queue_bind(forecaster_channel, exchange='forecaster', queues=['internal'])
 
     # consumers
-    listen_forecaster_update = threading.Thread(name='listen_forecaster_update', target=dbs.consume,
-                                                args=('forecaster', 'internal', 'do_update_forecaster', update_forecaster,
-                                                      dbs_connection))
-    listen_frontend = threading.Thread(name='listen_frontend', target=dbs.consume,
-                                       args=(
-                                           'forecaster', 'internal', 'on_demand_request', predict_requests,
-                                           dbs_connection))
+    listen_forecaster_update = threading.Thread(name='listen_forecaster_update', target=dbs.consume, args=('forecaster', 'internal', 'do_update_forecaster', update_forecaster))
+    listen_frontend = threading.Thread(name='listen_frontend', target=dbs.consume, args=('forecaster', 'internal', 'on_demand_request', predict_requests))
     listen_forecaster_update.start()
     listen_frontend.start()
     listen_forecaster_update.join()

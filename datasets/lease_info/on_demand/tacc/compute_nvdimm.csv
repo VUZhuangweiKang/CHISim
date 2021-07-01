@@ -1,0 +1,2 @@
+lease_id,project_id,user_id,created_at,deleted_at,start_on,end_on,status,node_cnt,reserve_conditions,reserve_count_range,node_type
+ff29408d3d414c1b3dc3c65e9f8a765b,f99d9532a5b5d343b83d24d66f222d74,09bf9b381601466600058056f17dac95,2021-06-04 19:09:44,,2021-06-04 19:10:00,2021-06-16 19:09:00,active,1,"[""=="",""$node_type"",""compute_nvdimm""]",1-1,compute_nvdimm

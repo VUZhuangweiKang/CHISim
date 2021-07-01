@@ -1,0 +1,2 @@
+lease_id,project_id,user_id,created_at,deleted_at,start_on,end_on,status,node_cnt,reserve_conditions,reserve_count_range,node_type
+92822df6260354568585cd1b1dba31d9,02eb27d0fd5ba157496241313f879cfb,86809c1b6cb2f42e39ff6aa87ce4d922,2021-03-15 04:28:49,2021-03-15 20:42:36,2021-03-15 05:30:00,2021-03-20 04:28:00,active,4,"[""=="",""$node_type"",""compute_cascadelake_r""]",4-4,compute_cascadelake_r

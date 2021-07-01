@@ -1,12 +1,12 @@
-matplotlib
-seaborn
-plotly
-pyanom
+setuptools
+wheel
 pandas
 numpy
 pika
 influxdb
+pymongo
 tsmoothie
 keras
 flask
 bintrees
+sklearn
