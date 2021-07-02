@@ -1,5 +1,5 @@
 import databus as dbs
-import pickle
+import json
 from collections import deque
 from datetime import datetime
 import argparse
@@ -13,7 +13,7 @@ def predict_requests(ch, method, properties, body):
     if properties.headers['key'] != 'on_demand_request':
         return
     global sw_start_time
-    request = pickle.loads(body)
+    request = json.loads(body)
     if len(slide_window) == 0:
         sw_start_time = datetime.strptime(request['start_on'], '%Y-%m-%d %H:%M:%S')
     current_time = datetime.strptime(request['start_on'], '%Y-%m-%d %H:%M:%S')
@@ -22,8 +22,8 @@ def predict_requests(ch, method, properties, body):
         df, scaler = data_preprocess(df, resample_slot)
         pred_requests = forecaster.predict(df)
         pred_requests = scaler.inverse_transform(pred_requests)
-        dbs.emit_msg(exchange='forecaster', routing_key='schedule_resource', payload=pickle.dumps(pred_requests), channel=forecaster_channel)
-        dbs.emit_msg(exchange='forecaster', routing_key='forecaster_feedback', payload=pickle.dumps(pred_requests), channel=forecaster_channel)
+        dbs.emit_msg(exchange='forecaster', routing_key='schedule_resource', payload=json.dumps(pred_requests), channel=forecaster_channel)
+        dbs.emit_msg(exchange='forecaster', routing_key='forecaster_feedback', payload=json.dumps(pred_requests), channel=forecaster_channel)
     else:
         slide_window.append(request)
 

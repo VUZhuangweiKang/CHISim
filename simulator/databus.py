@@ -22,7 +22,7 @@ def init_connection():
     return connection
 
 
-def emit_msg(exchange, routing_key, payload, channel, close_connection=False, no_print=False):
+def emit_msg(exchange, routing_key, payload, channel, close_connection=False, no_print=True):
     channel.exchange_declare(exchange=exchange, exchange_type=ExchangeType.direct)
     channel.basic_publish(
         exchange=exchange,

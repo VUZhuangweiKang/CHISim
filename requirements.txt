@@ -10,3 +10,5 @@ keras
 flask
 bintrees
 sklearn
+statsmodels
+pyanom
