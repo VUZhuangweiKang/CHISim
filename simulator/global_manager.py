@@ -18,8 +18,10 @@ if __name__ == '__main__':
     gm_channel.exchange_declare('internal_exchange')
     gm_channel.exchange_declare('user_requests_exchange')
     gm_channel.exchange_declare('machine_events_exchange')
+    gm_channel.exchange_declare('osg_jobs_exchange')
     gm_channel.queue_declare(queue='user_requests_queue')
     gm_channel.queue_declare(queue='machine_events_queue')
+    gm_channel.queue_declare(queue='osg_jobs_queue')
     gm_channel.queue_declare(queue='internal_queue')
     
     while True:

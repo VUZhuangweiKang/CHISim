@@ -1,11 +1,9 @@
 import databus as dbs
-from flask import Flask, redirect
+from flask import Flask
 import json
 import pymongo
 import argparse
 import threading
-import pickle
-import pandas as pd
 from flask import request
 
 app = Flask(__name__)
