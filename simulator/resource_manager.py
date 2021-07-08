@@ -10,7 +10,7 @@ app = Flask(__name__)
 
 
 def assign(node_type, node_cnt, pool):
-    nodes = resource_pool.find({"$and": [{"node_type": node_type}, {"status": "free"}]}).limit(node_cnt)
+    nodes = resource_pool.find({"$and": [{"node_type": node_type}, {"status": "free"}]}).limit(int(node_cnt))
     if nodes.count() < node_cnt:
         return False, node_cnt - nodes.count()
     else:

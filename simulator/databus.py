@@ -22,19 +22,19 @@ def init_connection():
     return connection
 
 
-def emit_msg(exchange, routing_key, payload, channel, close_connection=False, no_print=True):
+def emit_msg(exchange, routing_key, payload, channel, no_print=False):
     channel.exchange_declare(exchange=exchange, exchange_type=ExchangeType.direct)
     channel.basic_publish(
         exchange=exchange,
         routing_key=routing_key,
-        body=pickle.dumps(payload),
+        body=payload,
         properties=pika.BasicProperties(delivery_mode=1, headers={'key': routing_key})
     )
     if not no_print:
         print(payload)
 
 
-def emit_timeseries(exchange, routing_key, payload, index_col, scale_ratio, no_print=True):
+def emit_timeseries(exchange, routing_key, payload, index_col, scale_ratio, no_print=False):
     connection = init_connection()
     channel = connection.channel()
     channel.exchange_declare(exchange)
@@ -60,8 +60,8 @@ def emit_timeseries(exchange, routing_key, payload, index_col, scale_ratio, no_p
 def consume(exchange, queue, binding_key, callback):
     connection = init_connection()
     channel = connection.channel()
-    channel.queue_declare(queue)
     channel.queue_bind(exchange=exchange, queue=queue, routing_key=binding_key)
+    channel.basic_qos(prefetch_count=1)
     channel.basic_consume(queue=queue, on_message_callback=callback, auto_ack=True)
     try:
         channel.start_consuming()

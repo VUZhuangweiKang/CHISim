@@ -43,6 +43,6 @@ sudo systemctl enable rabbitmq-server
 sudo systemctl start rabbitmq-server
 
 # create a user
-rabbitmqctl add_user chi-sim chi-sim
+sudo rabbitmqctl add_user chi-sim chi-sim
 # tag the user with "administrator" for full management UI and HTTP API access
-rabbitmqctl set_user_tags chi-sim administrator
+sudo rabbitmqctl set_user_tags chi-sim administrator

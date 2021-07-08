@@ -2,7 +2,9 @@ import pandas as pd
 from tsmoothie.smoother import SpectralSmoother
 from sklearn.preprocessing import MinMaxScaler
 import logging
+from datetime import datetime
 
+get_timestamp = lambda time_str: datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S').timestamp()
 
 def spectral_smoother(df):
     sds = df.values
@@ -16,7 +18,7 @@ def resample_sum(df, slot):
     rs_sum['start_on'] = pd.to_datetime(df.start_on)
     rs_sum['node_cnt'] = df.node_cnt
     rs_sum = rs_sum.set_index('start_on', drop=True)
-    rs_sum = rs_sum.resample('%dH' % slot).sum().fillna(0)
+    rs_sum = rs_sum.resample('%dH' % slot, closed='right').sum().fillna(0)
     rs_sum.reset_index(inplace=True)
     return rs_sum
 
@@ -31,6 +33,7 @@ def data_preprocess(df, slot):
     # step 2. smooth data
     smoother = spectral_smoother(df)
     smooth_df = smoother.smooth_data.squeeze()
+    df = pd.DataFrame([])
     df['node_cnt'] = smooth_df
 
     # step 3. data normalization
