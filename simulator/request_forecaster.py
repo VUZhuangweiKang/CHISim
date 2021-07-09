@@ -41,11 +41,8 @@ def listen_on_demand_requests(ch, method, properties, body):
             pred_error = rsw_right['node_cnt'] - pre_left['node_cnt']
             if rsw.shape[0] > 1 and pred_error > 0:
                 payload = {'node_type': pre_left['node_type'], 'node_cnt': pred_error, 'pool': 'chameleon'}
-                rv = requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload)
-                if rv.status_code == 202:
-                    # 预测值和真实值的差要补齐，如果不够，让resource_scheduler决定要抢占哪些节点
-                    rsw_right['node_cnt'] = rsw_right['node_cnt'] - pre_left['node_cnt']
-                    dbs.emit_msg(exchange='internal_exchange', routing_key='schedule_resource', payload=json.dumps(rsw_right), channel=ch)
+                # 让resource_manager决定抢占哪些节点如果节点数量不够
+                requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload)
             elif pred_error < 0:
                 payload = {'node_type': pre_left['node_type'], 'node_cnt': -pred_error, 'pool': 'chameleon'}
                 requests.post(url='%s/release_nodes' % rsrc_mgr_url, json=payload)

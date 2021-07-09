@@ -12,4 +12,3 @@ if __name__ == '__main__':
     args = vars(args)
     args.update({'exchange': 'osg_jobs_exchange', 'routing_key': 'osg_job'})
     dbs.emit_timeseries(**args)
-

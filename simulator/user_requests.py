@@ -1,6 +1,4 @@
 import argparse
-import signal
-import pickle
 import databus as dbs
 
 

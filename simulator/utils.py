@@ -6,6 +6,7 @@ from datetime import datetime
 
 get_timestamp = lambda time_str: datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S').timestamp()
 
+
 def spectral_smoother(df):
     sds = df.values
     smoother = SpectralSmoother(smooth_fraction=0.3, pad_len=1)

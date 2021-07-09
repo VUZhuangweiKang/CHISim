@@ -9,19 +9,6 @@ from flask import request
 app = Flask(__name__)
 
 
-def assign(node_type, node_cnt, pool):
-    nodes = resource_pool.find({"$and": [{"node_type": node_type}, {"status": "free"}]}).limit(int(node_cnt))
-    if nodes.count() < node_cnt:
-        return False, node_cnt - nodes.count()
-    else:
-        node_ids = [node['HOST_NAME (PHYSICAL)'] for node in nodes]
-        resource_pool.update_many(
-            {"HOST_NAME (PHYSICAL)": {"$in": node_ids}},
-            {"$set": {"status": "inuse", "pool": pool}}
-        )
-        return True, 0
-
-
 def release(node_type, node_cnt):
     nodes = resource_pool.find({"$and": [{"node_type": node_type}, {"status": "inuse"}]})
     if nodes.count() < node_cnt:
@@ -42,15 +29,29 @@ def get_free_nodes():
     return str(free_nodes), 200
 
 
-# TODO: in-advance, on_demand_predict, on_demand_makeup均通过次acquire函数请求资源
+def preempt_nodes():
+    # TODO: 此处应有preemption policy决定
+    request_data = None
+    resource_pool.update_many({"HOST_NAME (PHYSICAL)": {"$in": request_data['preempt_nodes']}},
+                              {"$set": {"status": "inuse", "pool": "chameleon"}})
+    resource_pool.update_many({"$and": [{"node_type": request_data['node_type']}, {"status": "free"}]},
+                              {"$set": {"status": "inuse", "pool": "chameleon"}})
+
+
 @app.route('/acquire_nodes', methods=['POST'])
 def acquire_nodes():
     request_data = request.get_json()
-    results = assign(request_data['node_type'], request_data['node_cnt'], request_data['pool'])
-    if results[0]:
-        return 'OK', 200
-    else:
-        return str(results[1]), 202
+    nodes = resource_pool.find({"$and": [{"node_type": request_data['node_type']}, {"status": "free"}]}).limit(int(request_data['node_cnt']))
+    if nodes.count() < request_data['node_cnt']:
+        preempt_nodes()
+    nodes = resource_pool.find({"$and": [{"node_type": request_data['node_type']}, {"status": "free"}]}).limit(int(request_data['node_cnt']))
+    node_ids = [node['HOST_NAME (PHYSICAL)'] for node in nodes]
+    resource_pool.update_many(
+        {"HOST_NAME (PHYSICAL)": {"$in": node_ids}},
+        {"$set": {"status": "inuse", "pool": request_data['pool']}}
+    )
+    return 'OK', 200
+
 
 
 @app.route('/release_nodes', methods=['POST'])
@@ -63,21 +64,10 @@ def release_nodes():
         return 'release node %d < available nodes %d' % (request_data['node_cnt'], results[1]), 403
 
 
-@app.route('/preempt_nodes', methods=['POST'])
-def preempt_nodes():
-    request_data = request.get_json()
-    resource_pool.update_many({"HOST_NAME (PHYSICAL)": {"$in": request_data['preempt_nodes']}},
-                              {"$set": {"status": "inuse", "pool": "chameleon"}})
-    resource_pool.update_many({"$and": [{"node_type": request_data['node_type']}, {"status": "free"}]},
-                              {"$set": {"status": "inuse", "pool": "chameleon"}})
-    return 'OK', 200
-
-
 def process_machine_event(ch, method, properties, body):
     global resource_pool
     if properties.headers['key'] != 'machine_event':
         return
-
     machine_event = json.loads(body)
     machine_id = machine_event['HOST_NAME (PHYSICAL)']
     machine = resource_pool.find_one({"HOST_NAME (PHYSICAL)": machine_id})
@@ -117,7 +107,7 @@ if __name__ == '__main__':
     resource_pool = db['resource_pool']
     
     # listen machine events
-    lme = threading.Thread(name='listen_machine_events', target=dbs.consume, args=('machine_events_exchange', 'machine_events_queue', 'machine_event', process_machine_event))
-    lme.start()
+    thread1 = threading.Thread(name='listen_machine_events', target=dbs.consume, args=('machine_events_exchange', 'machine_events_queue', 'machine_event', process_machine_event))
+    thread1.start()
     app.run(host=args.host, port=5000, debug=False)
-    lme.join()
+    thread1.join()

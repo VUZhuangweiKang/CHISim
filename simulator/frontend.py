@@ -1,9 +1,7 @@
-from collections import deque
 import databus as dbs
 import threading
 from threading import RLock
 import json
-import time
 import argparse
 from influxdb import InfluxDBClient
 from bintrees import FastRBTree

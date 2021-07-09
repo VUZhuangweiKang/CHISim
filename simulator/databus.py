@@ -1,7 +1,7 @@
 import pandas as pd
 import time
 import os
-import json, pickle
+import json
 import pika
 from pika.exchange_type import ExchangeType
 
@@ -13,8 +13,9 @@ def init_connection():
 
     params = (pika.ConnectionParameters(
         host=connect_info['host'],
-        credentials=pika.credentials.PlainCredentials(username=connect_info['username'], password=connect_info['password'],
-                                                      erase_on_connect=True),
+        heartbeat=600,
+        blocked_connection_timeout=3000,
+        credentials=pika.credentials.PlainCredentials(username=connect_info['username'], password=connect_info['password'], erase_on_connect=True),
         connection_attempts=5, retry_delay=1)
     )
 
@@ -44,7 +45,7 @@ def emit_timeseries(exchange, routing_key, payload, index_col, scale_ratio, no_p
         for index, row in df.iterrows():
             if last_send_at:
                 sleep_sec = (pd.to_datetime(row[index_col_name]) - pd.to_datetime(last_send_at)).total_seconds()
-                time.sleep(sleep_sec / scale_ratio)
+                time.sleep(sleep_sec/scale_ratio)
             channel.basic_publish(
                 exchange=exchange,
                 routing_key=routing_key,
