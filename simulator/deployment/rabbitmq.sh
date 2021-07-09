@@ -46,3 +46,4 @@ sudo systemctl start rabbitmq-server
 sudo rabbitmqctl add_user chi-sim chi-sim
 # tag the user with "administrator" for full management UI and HTTP API access
 sudo rabbitmqctl set_user_tags chi-sim administrator
+sudo rabbitmqctl set_permissions -p / chi-sim ".*" ".*" ".*"

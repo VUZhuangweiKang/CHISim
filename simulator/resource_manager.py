@@ -9,19 +9,6 @@ from flask import request
 app = Flask(__name__)
 
 
-def release(node_type, node_cnt):
-    nodes = resource_pool.find({"$and": [{"node_type": node_type}, {"status": "inuse"}]})
-    if nodes.count() < node_cnt:
-        return False, nodes.count()
-    else:
-        node_ids = [node['HOST_NAME (PHYSICAL)'] for node in nodes]
-        resource_pool.update_many(
-            {"HOST_NAME (PHYSICAL)": {"$in": node_ids}},
-            {"$set": {"status": "free", "pool": 'chameleon'}}
-        )
-        return True, 0
-
-
 @app.route('/get_free_nodes', methods=['GET'])
 def get_free_nodes():
     node_type = request.args.get('node_type')
@@ -56,11 +43,23 @@ def acquire_nodes():
 @app.route('/release_nodes', methods=['POST'])
 def release_nodes():
     request_data = request.get_json()
-    results = release(request_data['node_type'], request_data['node_cnt'])
-    if results:
-        return 'OK', 200
+    nodes = resource_pool.find({"$and": [{"node_type": request_data['node_type']}, {"status": "inuse"}]})
+    if nodes.count() < request_data['node_cnt']:
+        return 'release node %d < inuse nodes %d' % (request_data['node_cnt'], nodes.count()), 403
     else:
-        return 'release node %d < available nodes %d' % (request_data['node_cnt'], results[1]), 403
+        node_ids = [node['HOST_NAME (PHYSICAL)'] for node in nodes]
+        resource_pool.update_many(
+            {"HOST_NAME (PHYSICAL)": {"$in": node_ids}},
+            {"$set": {"status": "free", "pool": 'chameleon'}}
+        )
+        return 'OK', 200
+
+
+@app.route('/submit_osg_job', method=['POST'])
+def submit_osg_job():
+    osg_job = request.get_json()
+    # TODO: 收到job后要确定将job部署在哪台machine，然后将json格式的job返回给backfill
+
 
 
 def process_machine_event(ch, method, properties, body):

@@ -2,7 +2,7 @@ setuptools
 wheel
 pandas
 numpy
-pika
+pika==1.2.0
 influxdb
 pymongo
 tsmoothie
