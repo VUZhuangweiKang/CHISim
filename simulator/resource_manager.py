@@ -53,7 +53,6 @@ def acquire_nodes():
     return 'OK', 200
 
 
-
 @app.route('/release_nodes', methods=['POST'])
 def release_nodes():
     request_data = request.get_json()
