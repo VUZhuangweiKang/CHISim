@@ -66,7 +66,6 @@ def trace_active_jobs():
                     osg_job_collection.insert_one(osg_job)
 
 
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--rsrc_mgr_url', type=str, default='http://127.0.0.1:5000', help='URL of the REST resource manager')

@@ -79,7 +79,6 @@ def process_machine_event(ch, method, properties, body):
     machine_event = json.loads(body)
     machine_id = machine_event['HOST_NAME (PHYSICAL)']
     machine = resource_pool.find_one({"HOST_NAME (PHYSICAL)": machine_id})
-
     if machine_event['EVENT'] in ['ENABLE', 'UPDATE']:
         if not machine:
             # parse node type
@@ -92,6 +91,11 @@ def process_machine_event(ch, method, properties, body):
                 machine_event['node_type'] = None
             machine_event['status'] = 'free'
             machine_event['pool'] = 'chameleon'
+
+            machine_event['cpus'] = hardware_profile[machine_event['node_type']]['CPU']
+            machine_event['inuse_cpus'] = 0
+            machine_event['memory'] = hardware_profile[machine_event['node_type']]['RAM']
+            machine_event['inuse_memory'] = 0
             resource_pool.insert_one(machine_event)
     elif machine_event['EVENT'] == 'DISABLE':
         if machine:
@@ -113,7 +117,9 @@ if __name__ == '__main__':
     mongo_client.drop_database('ChameleonSimulator')
     db = mongo_client['ChameleonSimulator']
     resource_pool = db['resource_pool']
-    
+    with open('hardware.json') as f:
+        hardware_profile = json.load(f)
+
     # listen machine events
     thread1 = threading.Thread(name='listen_machine_events', target=dbs.consume, args=('machine_events_exchange', 'machine_events_queue', 'machine_event', process_machine_event))
     thread1.start()

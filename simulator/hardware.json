@@ -1,0 +1,6 @@
+{
+    "compute_haswell": {
+        "CPU": 2,
+        "RAM": 131072
+    }
+}
