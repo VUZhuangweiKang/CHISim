@@ -38,7 +38,8 @@ def process_job(ch, method, properties, body):
             "JobSimExpectCompleteDate": None,
             "JobSimCompleteDate": None,
             "JobSimStatus": "pending",
-            "ResubmitCount": 0
+            "ResubmitCount": 0,
+            "Machine": None
         })
         with lock:
             waiting_queue.append(osg_job)
@@ -68,7 +69,7 @@ def trace_active_jobs():
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--rsrc_mgr_url', type=str, default='localhost', help='host IP for running the resource manager')
+    parser.add_argument('--rsrc_mgr_url', type=str, default='http://127.0.0.1:5000', help='URL of the REST resource manager')
     parser.add_argument('--mongo', type=str, default='mongodb://chi-sim:chi-sim@127.0.0.1:27017', help='MongoDB connection URL')
     parser.add_argument('--scale_ratio', type=float, help='The ratio for scaling down the time series data', default=10000)
     args = parser.parse_args()
@@ -82,6 +83,12 @@ if __name__ == '__main__':
     lock = RLock()
     waiting_queue = deque()
     running_job_tree = FastRBTree()
-    thread1 = threading.Thread(name='listen_osg_events', target=dbs.consume, args=('osg_jobs_exchange', 'osg_jobs_queue', 'osg_job', process_job))
+    thread1 = threading.Thread(name='listen_osg_jobs', target=dbs.consume, args=('osg_jobs_exchange', 'osg_jobs_queue', 'osg_job', process_job))
+    thread2 = threading.Thread(name='submit_osg_jobs', target=submit_job)
+    thread3 = threading.Thread(name='trace_active_osg_jobs', target=trace_active_jobs)
     thread1.start()
+    thread2.start()
+    thread3.start()
     thread1.join()
+    thread2.join()
+    thread3.join()

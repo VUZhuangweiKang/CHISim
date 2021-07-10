@@ -4,6 +4,7 @@ import json
 import pymongo
 import argparse
 import threading
+import pandas as pd
 from flask import request
 
 app = Flask(__name__)
@@ -55,11 +56,20 @@ def release_nodes():
         return 'OK', 200
 
 
-@app.route('/submit_osg_job', method=['POST'])
+@app.route('/submit_osg_job', methods=['POST'])
 def submit_osg_job():
     osg_job = request.get_json()
-    # TODO: 收到job后要确定将job部署在哪台machine，然后将json格式的job返回给backfill
-
+    nodes = resource_pool.find({"pool": "osg"})
+    nodes = pd.DataFrame(list(nodes))
+    nodes = nodes[(nodes['cpus'] - nodes['inuse_cpus'] > osg_job['CpusProvisioned']) & (nodes['memory'] - nodes['inuse_memory'] > osg_job['MemoryProvisioned'])]
+    first_fit_node = nodes.iloc[0]  # first fit node
+    osg_job['Machine'] = first_fit_node['HOST_NAME (PHYSICAL)'] 
+    osg_job['JobSimStatus'] = 'running'
+    resource_pool.update_one(
+        {"HOST_NAME (PHYSICAL)": osg_job['Machine']},
+        {"$set": {"inuse_cpus": first_fit_node['inuse_cpus'] + osg_job['CpusProvisioned'], "inuse_memory": first_fit_node['inuse_memory'] + osg_job['MemoryProvisioned']}}
+    )
+    return osg_job, 200
 
 
 def process_machine_event(ch, method, properties, body):
