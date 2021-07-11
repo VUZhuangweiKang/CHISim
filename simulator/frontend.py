@@ -19,13 +19,6 @@ def process_usr_requests(ch, method, properties, body):
     if not sim_start_time:
         sim_start_time = datetime.now().timestamp()
     
-    with lock:
-        if usr_request['deleted_at']:
-            lease_end = min(get_timestamp(usr_request['end_on']), get_timestamp(usr_request['deleted_at']))
-        else:
-            lease_end = get_timestamp(usr_request['end_on'])
-        active_leases_tree[lease_end] = usr_request
-    
     time_diff = (get_timestamp(usr_request['start_on']) - get_timestamp(usr_request['created_at'])) / 60
     if time_diff > 2:
         request_type = 'in_advance'
@@ -41,6 +34,13 @@ def process_usr_requests(ch, method, properties, body):
     elif request_type == 'on_demand':
         # relay user request to forecaster
         dbs.emit_msg(exchange='internal_exchange', routing_key='on_demand_request', payload=json.dumps(usr_request), channel=ch)
+    
+    with lock:
+        if usr_request['deleted_at']:
+            lease_end = min(get_timestamp(usr_request['end_on']), get_timestamp(usr_request['deleted_at']))
+        else:
+            lease_end = get_timestamp(usr_request['end_on'])
+        active_leases_tree[lease_end] = usr_request
 
 
 def trace_active_lease():
@@ -53,9 +53,8 @@ def trace_active_lease():
                 end_time = get_timestamp(recent_end['end_on'])
                 if (end_time-start_time) <= ((datetime.now().timestamp()-sim_start_time)*scale_ratio):
                     payload = {'node_type': recent_end['node_type'], 'node_cnt': recent_end['node_cnt']}
-                    rlt = requests.post(url='%s/release_nodes' % rsrc_mgr_url, json=payload)
-                    if rlt.status_code == 200:
-                        active_leases_tree.pop_min()
+                    requests.post(url='%s/release_nodes' % rsrc_mgr_url, json=payload)
+                    active_leases_tree.pop_min()
 
 
 if __name__ == '__main__':

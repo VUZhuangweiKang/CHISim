@@ -23,7 +23,7 @@ def init_connection():
     return connection
 
 
-def emit_msg(exchange, routing_key, payload, channel, no_print=False):
+def emit_msg(exchange, routing_key, payload, channel):
     channel.exchange_declare(exchange=exchange, exchange_type=ExchangeType.direct)
     channel.basic_publish(
         exchange=exchange,
@@ -31,11 +31,9 @@ def emit_msg(exchange, routing_key, payload, channel, no_print=False):
         body=payload,
         properties=pika.BasicProperties(delivery_mode=1, headers={'key': routing_key})
     )
-    if not no_print:
-        print(payload)
 
 
-def emit_timeseries(exchange, routing_key, payload, index_col, scale_ratio, no_print=False):
+def emit_timeseries(exchange, routing_key, payload, index_col, scale_ratio):
     connection = init_connection()
     channel = connection.channel()
     channel.exchange_declare(exchange)
@@ -53,8 +51,6 @@ def emit_timeseries(exchange, routing_key, payload, index_col, scale_ratio, no_p
                 properties=pika.BasicProperties(delivery_mode=1, headers={'key': routing_key})
             )
             last_send_at = row[index_col_name]
-            if not no_print:
-               print(row.to_json())
     connection.close()
 
 

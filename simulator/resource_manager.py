@@ -10,70 +10,72 @@ from flask import request
 app = Flask(__name__)
 
 
-@app.route('/get_free_nodes', methods=['GET'])
-def get_free_nodes():
-    node_type = request.args.get('node_type')
-    free_nodes = resource_pool.find({"$and": [{"node_type": node_type}, {"status": "free"}]}).count()
-    return str(free_nodes), 200
-
-
-def preempt_nodes():
-    # TODO: 此处应有preemption policy决定
-    request_data = None
-    resource_pool.update_many({"HOST_NAME (PHYSICAL)": {"$in": request_data['preempt_nodes']}},
-                              {"$set": {"status": "inuse", "pool": "chameleon"}})
-    resource_pool.update_many({"$and": [{"node_type": request_data['node_type']}, {"status": "free"}]},
-                              {"$set": {"status": "inuse", "pool": "chameleon"}})
+def preempt_nodes(request_data):
+    osg_nodes = resource_pool.find({"$and": [{"node_type": request_data['node_type']}, {"pool": "osg"}]})
+    osg_nodes = pd.DataFrame(list(osg_nodes))
+    if osg_nodes.shape[0] > request_data['node_cnt']:
+        # select nodes that have more available cpus
+        osg_nodes.sort_values(by=['inuse_cpus'], inplace=True)
+        osg_nodes = osg_nodes.iloc[:int(request_data['node_cnt'])]
+        payload = {"terminate_nodes": osg_nodes['HOST_NAME (PHYSICAL)'].to_list()}
+        dbs.emit_msg("osg_jobs_exchange", "terminate_osg_job", json.dumps(payload), rm_channel)
+        resource_pool.update_many(
+            {"HOST_NAME (PHYSICAL)": {"$in": osg_nodes['HOST_NAME (PHYSICAL)'].to_list()}},
+            {"$set": {"status": "inuse", "pool": "chameleon", "inuse_cpus": 0, "inuse_memory": 0}})
+        return True
+    return False
 
 
 @app.route('/acquire_nodes', methods=['POST'])
 def acquire_nodes():
     request_data = request.get_json()
-    nodes = resource_pool.find({"$and": [{"node_type": request_data['node_type']}, {"status": "free"}]}).limit(int(request_data['node_cnt']))
-    if nodes.count() < request_data['node_cnt']:
-        preempt_nodes()
-    nodes = resource_pool.find({"$and": [{"node_type": request_data['node_type']}, {"status": "free"}]}).limit(int(request_data['node_cnt']))
-    node_ids = [node['HOST_NAME (PHYSICAL)'] for node in nodes]
-    resource_pool.update_many(
-        {"HOST_NAME (PHYSICAL)": {"$in": node_ids}},
-        {"$set": {"status": "inuse", "pool": request_data['pool']}}
-    )
+    if request_data['pool'] == 'chameleon':
+        while True:
+            nodes = resource_pool.find({"$and": [{"node_type": request_data['node_type']}, {"status": "free"}, {"pool": "chameleon"}]}).limit(int(request_data['node_cnt']))
+            if len(list(nodes)) < request_data['node_cnt']:
+                temp = request_data.copy()
+                temp['node_cnt'] = request_data['node_cnt'] - len(list(nodes))
+                if preempt_nodes(temp):
+                    break
+            else:
+                break
+        nodes = resource_pool.find({"$and": [{"node_type": request_data['node_type']}, {"status": "free"}, {"pool": "chameleon"}]}).limit(int(request_data['node_cnt']))
+        free_nodes = pd.DataFrame(list(nodes))
+        assert free_nodes.shape[0] >= request_data['node_cnt']
+        resource_pool.update_many(
+            {"HOST_NAME (PHYSICAL)": {"$in": free_nodes['HOST_NAME (PHYSICAL)'].to_list()}},
+            {"$set": {"status": "inuse"}}
+        )
+    elif request_data['pool'] == 'osg':
+        ch_node = resource_pool.find_one({"$and": [{"status": "free"}, {"pool": "chameleon"}]})
+        if ch_node:
+            resource_pool.update_one(
+                {"HOST_NAME (PHYSICAL)": ch_node['HOST_NAME (PHYSICAL)']},
+                {"$set": {"status": "inuse", "pool": "osg"}}
+            )
     return 'OK', 200
+    
 
 
 @app.route('/release_nodes', methods=['POST'])
 def release_nodes():
     request_data = request.get_json()
-    nodes = resource_pool.find({"$and": [{"node_type": request_data['node_type']}, {"status": "inuse"}]})
-    if nodes.count() < request_data['node_cnt']:
-        return 'release node %d < inuse nodes %d' % (request_data['node_cnt'], nodes.count()), 403
+    nodes = resource_pool.find({"$and": [
+        {"node_type": request_data['node_type']}, 
+        {"pool": "chameleon"},
+        {"status": "inuse"}]}).limit(int(request_data['node_cnt']))
+    inuse_nodes = pd.DataFrame(list(nodes))
+    if inuse_nodes.shape[0] < request_data['node_cnt']:
+        return 'release node %d < inuse nodes %d' % (request_data['node_cnt'], inuse_nodes.shape[0]), 202
     else:
-        node_ids = [node['HOST_NAME (PHYSICAL)'] for node in nodes]
         resource_pool.update_many(
-            {"HOST_NAME (PHYSICAL)": {"$in": node_ids}},
+            {"HOST_NAME (PHYSICAL)": {"$in": inuse_nodes['HOST_NAME (PHYSICAL)'].to_list()}},
             {"$set": {"status": "free", "pool": 'chameleon'}}
         )
         return 'OK', 200
 
 
-@app.route('/submit_osg_job', methods=['POST'])
-def submit_osg_job():
-    osg_job = request.get_json()
-    nodes = resource_pool.find({"pool": "osg"})
-    nodes = pd.DataFrame(list(nodes))
-    nodes = nodes[(nodes['cpus'] - nodes['inuse_cpus'] > osg_job['CpusProvisioned']) & (nodes['memory'] - nodes['inuse_memory'] > osg_job['MemoryProvisioned'])]
-    first_fit_node = nodes.iloc[0]  # first fit node
-    osg_job['Machine'] = first_fit_node['HOST_NAME (PHYSICAL)'] 
-    osg_job['JobSimStatus'] = 'running'
-    resource_pool.update_one(
-        {"HOST_NAME (PHYSICAL)": osg_job['Machine']},
-        {"$set": {"inuse_cpus": first_fit_node['inuse_cpus'] + osg_job['CpusProvisioned'], "inuse_memory": first_fit_node['inuse_memory'] + osg_job['MemoryProvisioned']}}
-    )
-    return osg_job, 200
-
-
 def process_machine_event(ch, method, properties, body):
-    global resource_pool
     if properties.headers['key'] != 'machine_event':
         return
     machine_event = json.loads(body)
@@ -89,21 +91,26 @@ def process_machine_event(ch, method, properties, body):
                 machine_event['node_type'] = json.loads(properties)['node_type']
             else:
                 machine_event['node_type'] = None
-            machine_event['status'] = 'free'
-            machine_event['pool'] = 'chameleon'
-
-            machine_event['cpus'] = hardware_profile[machine_event['node_type']]['CPU']
-            machine_event['inuse_cpus'] = 0
-            machine_event['memory'] = hardware_profile[machine_event['node_type']]['RAM']
-            machine_event['inuse_memory'] = 0
+            
+            machine_event.update({
+                "status": "free",
+                "pool": "chameleon",
+                "cpus": hardware_profile[machine_event['node_type']]['CPU'],
+                "inuse_cpus": 0,
+                "memory": hardware_profile[machine_event['node_type']]['RAM'],
+                "inuse_memory": 0,
+                "backfill": []
+            })
             resource_pool.insert_one(machine_event)
     elif machine_event['EVENT'] == 'DISABLE':
         if machine:
-            if machine['pool'] == 'OSG':
-                # TODO: machine is disabled by the chameleon Operator
-                pass
-            machine_event['status'] = 'inactive'
-            machine_event['pool'] = 'chameleon'
+            machine_event.update({
+                "pool": "chameleon",
+                "status": "inactive",
+                "inuse_cpus": 0,
+                "inuse_memory": 0,
+                "backfill": []
+            })
             resource_pool.update_one({"HOST_NAME (PHYSICAL)": machine_id}, {"$set": machine_event})
 
 
@@ -119,6 +126,8 @@ if __name__ == '__main__':
     resource_pool = db['resource_pool']
     with open('hardware.json') as f:
         hardware_profile = json.load(f)
+    dbs_connection = dbs.init_connection()
+    rm_channel = dbs_connection.channel()
 
     # listen machine events
     thread1 = threading.Thread(name='listen_machine_events', target=dbs.consume, args=('machine_events_exchange', 'machine_events_queue', 'machine_event', process_machine_event))

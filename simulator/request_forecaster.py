@@ -62,7 +62,7 @@ def listen_on_demand_requests(ch, method, properties, body):
         for preq in pred_requests:
             payload = {'node_type': "compute_haswell", 'node_cnt': int(preq), 'pool': 'chameleon'}
             prediction_window.append(payload)
-            requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload)
+            rc = requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload)
 
         # move sliding window --> fs_len
         while get_timestamp(slide_window[0]['start_on']) < rsw.index[fs_len].timestamp():
