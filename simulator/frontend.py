@@ -1,3 +1,4 @@
+from pymongo.message import query
 import databus as dbs
 import threading
 from threading import RLock
@@ -19,20 +20,22 @@ from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import train_test_split
 import tensorflow as tf
 import math
-from influxdb import DataFrameClient
 import time
 import numpy as np
 import pandas as pd
+import warnings
+warnings.filterwarnings("ignore")
 
 
 logger = get_logger(__name__)
 get_timestamp = lambda time_str: datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S').timestamp()
+warm_down = False
 
 
 def process_usr_requests(ch, method, properties, body):
     if properties.headers['key'] != 'raw_request':
         return
-    global sim_start_time, active_leases_tree
+    global sim_start_time, active_leases_tree, warm_down
     usr_request = json.loads(body)
     if not sim_start_time:
         sim_start_time = datetime.now().timestamp()
@@ -47,18 +50,23 @@ def process_usr_requests(ch, method, properties, body):
         with lock:
             slide_window.append(usr_request)
             if len(prediction_window) > 0:
-                diff = prediction_window[0]['node_cnt'] - usr_request['node_cnt']
-                payload = {'node_type': prediction_window[0]['node_type'], 'node_cnt': usr_request['node_cnt'], 'pool': 'chameleon'}
+                if not warm_down:
+                    logger.info('Frontend has been warmed up.')
+                warm_down = True
+                remaining = prediction_window[0]['node_cnt'] - usr_request['node_cnt']
+                payload = {'node_type': usr_request['node_type'], 'node_cnt': usr_request['node_cnt'], 'pool': 'chameleon'}
                 response = requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload)
-                if response.status_code == 200:
-                    assert diff >= 0  # since we have reserved node when performing prediction
-                    prediction_window[0]['node_cnt'] = diff
+                if remaining > 0:
+                    assert response.status_code == 200   # since we have reserved node when performing prediction
+                    prediction_window[0]['node_cnt'] = remaining
                 else:
-                    assert diff < 0
                     prediction_window[0]['node_cnt'] = 0
+            else:
+                payload = {'node_type': usr_request['node_type'], 'node_cnt': usr_request['node_cnt'], 'pool': 'chameleon'}
+                response = requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload)
             make_prediction()
+    influx_client.write_points(json_body)
 
-    db_client.write_points(json_body)
     if response.status_code == 200:
         if usr_request['deleted_at']:
             lease_end = min(get_timestamp(usr_request['end_on']), get_timestamp(usr_request['deleted_at']))
@@ -71,16 +79,15 @@ def process_usr_requests(ch, method, properties, body):
 def trace_active_lease():
     global active_leases_tree, sim_start_time
     while True:
-        lock.acquire()
-        if not active_leases_tree.is_empty():
-            recent_end = active_leases_tree.min_item()[1]
-            start_time = get_timestamp(recent_end['start_on'])
-            end_time = get_timestamp(recent_end['end_on'])
-            if (end_time-start_time) <= ((datetime.now().timestamp()-sim_start_time)*scale_ratio):
-                payload = {'node_type': recent_end['node_type'], 'node_cnt': recent_end['node_cnt']}
-                requests.post(url='%s/release_nodes' % rsrc_mgr_url, json=payload)
-                active_leases_tree.pop_min()
-        lock.release()
+        with lock:
+            if not active_leases_tree.is_empty():
+                recent_end = active_leases_tree.min_item()[1]
+                start_time = get_timestamp(recent_end['start_on'])
+                end_time = get_timestamp(recent_end['end_on'])
+                if (end_time-start_time) <= ((datetime.now().timestamp()-sim_start_time)*scale_ratio):
+                    payload = {'node_type': recent_end['node_type'], 'node_cnt': recent_end['node_cnt']}
+                    requests.post(url='%s/release_nodes' % rsrc_mgr_url, json=payload)
+                    active_leases_tree.pop_min()
 
 
 ########## Request Forecaster ###########
@@ -95,10 +102,9 @@ def make_prediction():
     # when the sampled slide window is full, make prediction
     if rsw.shape[0] >= int(sw_len/fs_len):
         # some nodes are left in the previous prediction window
-        if len(prediction_window[0]['node_cnt']) > 0:
-            if prediction_window[0]['node_cnt'] > 0:
-                payload = {'node_type': prediction_window[0]['node_type'], 'node_cnt': prediction_window[0]['node_cnt'], 'pool': 'chameleon'}
-                requests.post(url='%s/release_nodes' % rsrc_mgr_url, json=payload)
+        if len(prediction_window) > 0 and prediction_window[0]['node_cnt'] > 0:
+            payload = {'node_type': prediction_window[0]['node_type'], 'node_cnt': prediction_window[0]['node_cnt'], 'pool': 'chameleon'}
+            requests.post(url='%s/release_nodes' % rsrc_mgr_url, json=payload)
 
         # data smoothing and normalization
         smoother = spectral_smoother(rsw)
@@ -147,7 +153,7 @@ def loss_function(y_true, y_pred):
 
 def train_model():
     query_str = 'SELECT * FROM on_demand'
-    df = db_client.query(query_str)
+    df = pd.DataFrame(influx_client.query(query_str).get_points())
 
     """
     Build LSTM Model
@@ -213,7 +219,6 @@ if __name__ == '__main__':
     fs_len = args.fs_len
     sw_len = args.sw_len
 
-    waiting_queue = []
     active_leases_tree = FastRBTree()
     sim_start_time = None
 
@@ -225,31 +230,27 @@ if __name__ == '__main__':
 
     with open('influxdb.json') as f:
         db_info = json.load(f)
-    db_client = InfluxDBClient(host=db_info['host'], username=db_info['username'], password=db_info['password'])
-    db_client.drop_database('UserRequests')
-    db_client.create_database('UserRequests')
-    db_client.switch_database('UserRequests')
+    influx_client = InfluxDBClient(**db_info)
+    influx_client.drop_database('UserRequests')
+    influx_client.create_database('UserRequests')
+    influx_client.switch_database('UserRequests')
 
     mongo_client = pymongo.MongoClient(args.mongo)
     mongodb = mongo_client['ChameleonSimulator']
     ch_lease_collection = mongodb['chameleon_leases']
 
-    thread1 = threading.Thread(name='listen_user_requests', target=dbs.consume, args=('user_requests_exchange', 'user_requests_queue', 'raw_request', process_usr_requests))
-    thread2 = threading.Thread(name='trace active lease', target=trace_active_lease, args=())
+    thread1 = threading.Thread(name='listen_user_requests', target=dbs.consume, args=('user_requests_exchange', 'user_requests_queue', 'raw_request', process_usr_requests), daemon=True)
+    thread2 = threading.Thread(name='trace active lease', target=trace_active_lease, args=(), daemon=True)
     thread1.start()
     thread2.start()
     
-    with open('influxdb.json') as f:
-        db_info = json.load(f)
-    db_info.update({'database': 'UserRequests'})
-    db_client = DataFrameClient(**db_info)
     while True:
-        query_str = 'SELECT COUNT(lease_id) AS count FROM on_demand'
-        query_results = db_client.query(query_str)
-        if 'on_demand' in query_results:
-            count = query_results['on_demand']['count'][0]
-            if count % args.refresh == 0:
-                train_model()
-                with lock:
-                    forecaster = keras.models.load_model('forecaster.h5', compile=False)
+        # query_str = 'SELECT COUNT(lease_id) AS count FROM on_demand'
+        # query_results = influx_client.query(query_str)
+        # if 'on_demand' in query_results:
+        #     count = query_results['on_demand']['count'][0]
+        #     if count % args.refresh == 0:
+        #         train_model()
+        #         with lock:
+        #             forecaster = keras.models.load_model('forecaster.h5', compile=False)
         time.sleep(3)
