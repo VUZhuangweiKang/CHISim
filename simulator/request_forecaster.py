@@ -3,10 +3,10 @@ from collections import deque
 import requests
 import threading
 from tensorflow import keras
-from keras.models import Sequential
-from keras.layers import Dense
-from keras.layers import LSTM
-from keras.callbacks import EarlyStopping
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense
+from tensorflow.keras.layers import LSTM
+from tensorflow.keras.callbacks import EarlyStopping
 from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import train_test_split
 import tensorflow as tf
@@ -62,7 +62,7 @@ def listen_on_demand_requests(ch, method, properties, body):
         for preq in pred_requests:
             payload = {'node_type': "compute_haswell", 'node_cnt': int(preq), 'pool': 'chameleon'}
             prediction_window.append(payload)
-            rc = requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload)
+            requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload)
 
         # move sliding window --> fs_len
         while get_timestamp(slide_window[0]['start_on']) < rsw.index[fs_len].timestamp():
@@ -151,8 +151,8 @@ if __name__ == '__main__':
     fs_len = args.fs_len
     sw_len = args.sw_len
     scale_ratio = args.scale_ratio
-    slide_window = deque(maxlen=100000)
-    prediction_window = deque(maxlen=args.fs_len)
+    slide_window = deque([], maxlen=100000)
+    prediction_window = deque([], maxlen=args.fs_len)
     rsrc_mgr_url = args.rsrc_mgr
     lock = threading.RLock()
     forecaster = keras.models.load_model('forecaster.h5', compile=False)

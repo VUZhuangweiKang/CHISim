@@ -16,7 +16,7 @@ def spectral_smoother(df):
 
 def resample_sum(df, slot):
     rs_sum = pd.DataFrame([])
-    rs_sum['start_on'] = pd.to_datetime(df.start_on)
+    rs_sum['start_on'] = pd.to_datetime(df['start_on'])
     rs_sum['node_cnt'] = df.node_cnt
     rs_sum = rs_sum.set_index('start_on', drop=True)
     rs_sum = rs_sum.resample('%dH' % slot, closed='right').sum().fillna(0)

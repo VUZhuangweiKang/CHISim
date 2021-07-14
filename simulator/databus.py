@@ -51,7 +51,12 @@ def emit_timeseries(exchange, routing_key, payload, index_col, scale_ratio):
                 properties=pika.BasicProperties(delivery_mode=1, headers={'key': routing_key})
             )
             last_send_at = row[index_col_name]
-    connection.close()
+    print('Done')
+    try:
+        while True:
+            pass
+    except KeyboardInterrupt:
+        connection.close()
 
 
 def consume(exchange, queue, binding_key, callback):
