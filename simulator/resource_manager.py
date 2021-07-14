@@ -1,7 +1,7 @@
+import logging
 from re import T
 from flask.helpers import make_response
-import requests
-import pickle
+from utils import get_logger
 import databus as dbs
 from flask import Flask, jsonify
 import json
@@ -13,6 +13,11 @@ import pandas as pd
 from flask import request
 
 app = Flask(__name__)
+app.logger.disabled = True
+log = logging.getLogger('werkzeug')
+log.disabled = True
+
+logger = get_logger(__name__)
 
 
 def _find(query, one=False):
@@ -40,15 +45,18 @@ def _insert(data, one=True):
 
 def preempt_nodes(request_data):
     osg_nodes = _find({"$and": [{"node_type": request_data['node_type']}, {"pool": "osg"}]})
+    if osg_nodes.shape[0] == 0:
+        return
     osg_nodes.sort_values(by=['inuse_cpus'], inplace=True)
     if osg_nodes.shape[0] > request_data['node_cnt']:
         osg_nodes = osg_nodes.iloc[:int(request_data['node_cnt'])]
     payload = {"terminate_nodes": osg_nodes['HOST_NAME (PHYSICAL)'].to_list()}
-    _update(
+    result = _update(
         {"HOST_NAME (PHYSICAL)": {"$in": osg_nodes['HOST_NAME (PHYSICAL)'].to_list()}}, 
         {"$set": {"status": "inuse", "pool": "chameleon", "inuse_cpus": 0, "inuse_memory": 0, "backfill": []}},
         one=False
     )
+    logger.info('osg --> chameleon: %d' % result)
     dbs.emit_msg("osg_jobs_exchange", "terminate_osg_job", json.dumps(payload), rm_channel)
 
 
@@ -56,21 +64,22 @@ def preempt_nodes(request_data):
 def acquire_nodes():
     request_data = request.get_json()
     if request_data['pool'] == 'chameleon':
-        while True:
-            free_nodes = _find({"$and": [{"node_type": request_data['node_type']}, {"status": "free"}, {"pool": "chameleon"}]}).iloc[:int(request_data['node_cnt'])]
-            if free_nodes.shape[0] < request_data['node_cnt']:
-                temp = request_data.copy()
-                temp['node_cnt'] = request_data['node_cnt'] - free_nodes.shape[0]
-                preempt_nodes(temp)
-            else:
-                assert free_nodes.shape[0] >= request_data['node_cnt']
-                result = _update(filter={"HOST_NAME (PHYSICAL)": {"$in": free_nodes['HOST_NAME (PHYSICAL)'].to_list()}}, operations={"$set": {"status": "inuse"}}, one=False)
-                assert result >= request_data['node_cnt']
-                break
+        free_nodes = _find({"$and": [{"node_type": request_data['node_type']}, {"status": "free"}, {"pool": "chameleon"}]}).iloc[:int(request_data['node_cnt'])]
+        if free_nodes.shape[0] < request_data['node_cnt']:
+            temp = request_data.copy()
+            temp['node_cnt'] = request_data['node_cnt'] - free_nodes.shape[0]
+            preempt_nodes(temp)
+        else:
+            result = _update(filter={"HOST_NAME (PHYSICAL)": {"$in": free_nodes['HOST_NAME (PHYSICAL)'].to_list()}}, operations={"$set": {"status": "inuse"}}, one=False)
+            if result < request_data['node_cnt']:
+                logger.info('chameleon: free_nodes %d < acquire_nodes %d' % (result, request_data['node_cnt']))
+            return 'Fail', 202      
     elif request_data['pool'] == 'osg':
         result = _update(filter={"$and": [{"status": "free"}, {"pool": "chameleon"}]}, operations={"$set": {"status": "inuse", "pool": "osg"}})
         if result == 0:
             return 'no node is available for osg', 202
+        else:
+            logger.info('chameleon --> osg: %d' % result)
     return 'OK', 200
 
 
@@ -82,12 +91,14 @@ def release_nodes():
         {"pool": "chameleon"},
         {"status": "inuse"}]}).iloc[:int(request_data['node_cnt'])]
     if inuse_nodes.shape[0] < request_data['node_cnt']:
+        logger.error('chameleon: release_nodes %d > inuse_nodes %d' % (inuse_nodes.shape[0], int(request_data['node_cnt'])))
         return 'release node %d < inuse nodes %d' % (request_data['node_cnt'], inuse_nodes.shape[0]), 202
     else:
         result = _update(filter={"HOST_NAME (PHYSICAL)": {"$in": inuse_nodes['HOST_NAME (PHYSICAL)'].to_list()}}, operations= {"$set": {"status": "free", "pool": 'chameleon'}}, one=False)
         if result == request_data['node_cnt']:
             return 'OK', 200
         else:
+            logger.error('chameleon: expect_release %d != real_release %d' % (request_data['node_cnt'], result))
             return 'error: release', 202
 
 
@@ -170,5 +181,5 @@ if __name__ == '__main__':
     # listen machine events
     thread1 = threading.Thread(name='listen_machine_events', target=dbs.consume, args=('machine_events_exchange', 'machine_events_queue', 'machine_event', process_machine_event))
     thread1.start()
-    app.run(host=args.host, port=5000, debug=True)
+    app.run(host=args.host, port=5000, debug=False)
     thread1.join()

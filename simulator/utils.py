@@ -45,21 +45,19 @@ def data_preprocess(df, slot):
     return df, scaler
 
 
-def get_logger(logger_name, log_file):
+def get_logger(logger_name, log_file=None):
     logger = logging.getLogger(logger_name)
     logger.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(message)s')
 
-    fl = logging.FileHandler(log_file)
-    fl.setLevel(logging.DEBUG)
+    if log_file:
+        fl = logging.FileHandler(log_file)
+        fl.setLevel(logging.DEBUG)
+        fl.setFormatter(formatter)
+        logger.addHandler(fl)
 
     cl = logging.StreamHandler()
     cl.setLevel(logging.DEBUG)
-
-    formatter = logging.Formatter('%(message)s')
-    fl.setFormatter(formatter)
     cl.setFormatter(formatter)
-
-    logger.addHandler(fl)
     logger.addHandler(cl)
-
     return logger

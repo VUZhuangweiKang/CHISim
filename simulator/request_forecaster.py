@@ -1,3 +1,8 @@
+
+"""
+This file is not used
+"""
+
 import databus as dbs
 from collections import deque
 import requests
@@ -16,8 +21,11 @@ import argparse
 import time
 import numpy as np
 import json
-from utils import *
+import pandas as pd
+from datetime import datetime
+import utils as utl
 
+logger = utl.get_logger(__name__)
 
 # receive live request stream
 def listen_on_demand_requests(ch, method, properties, body):
@@ -28,7 +36,7 @@ def listen_on_demand_requests(ch, method, properties, body):
     slide_window.append(request)
 
     df = pd.DataFrame(slide_window)
-    rsw = resample_sum(df, fs_len).iloc[:-1]
+    rsw = utl.resample_sum(df, fs_len).iloc[:-1]
     rsw.dropna(inplace=True)
     rsw.set_index(['start_on'], inplace=True)
     rsw = rsw.astype(float)
@@ -48,11 +56,11 @@ def listen_on_demand_requests(ch, method, properties, body):
                 requests.post(url='%s/release_nodes' % rsrc_mgr_url, json=payload)
 
         # 数据平滑处理和正则化
-        smoother = spectral_smoother(rsw)
+        smoother = utl.spectral_smoother(rsw)
         smooth_rsw = smoother.smooth_data.squeeze()
         df = pd.DataFrame([])
         df['node_cnt'] = smooth_rsw
-        scaler = MinMaxScaler(feature_range=(0, 1))
+        scaler = utl.MinMaxScaler(feature_range=(0, 1))
         df = scaler.fit_transform(df)
         df = np.array([df[:, 0]])
         df = np.reshape(df, (df.shape[0], 1, df.shape[1]))
@@ -65,7 +73,7 @@ def listen_on_demand_requests(ch, method, properties, body):
             requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload)
 
         # move sliding window --> fs_len
-        while get_timestamp(slide_window[0]['start_on']) < rsw.index[fs_len].timestamp():
+        while utl.get_timestamp(slide_window[0]['start_on']) < rsw.index[fs_len].timestamp():
             slide_window.popleft()
 
 
@@ -96,7 +104,7 @@ def train_model():
     """
     Build LSTM Model
     """
-    df, scaler = data_preprocess(df, fs_len)
+    df, scaler = utl.data_preprocess(df, fs_len)
     train, test = train_test_split(df, test_size=0.2, shuffle=False)
 
     trainX, trainY = create_lstm_dataset(train, sw_len)
@@ -159,7 +167,6 @@ if __name__ == '__main__':
     thread1 = threading.Thread(target=dbs.consume, args=('internal_exchange', 'internal_queue', 'on_demand_request', listen_on_demand_requests))
     thread1.start()
 
-    logger = get_logger(logger_name='build_model', log_file='build_model.log')
     with open('influxdb.json') as f:
         db_info = json.load(f)
     db_info.update({'database': 'UserRequests'})
