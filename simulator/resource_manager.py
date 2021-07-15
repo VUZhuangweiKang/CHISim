@@ -10,6 +10,7 @@ import argparse
 import threading
 from threading import RLock
 import pandas as pd
+import time
 from flask import request
 
 app = Flask(__name__)
@@ -17,7 +18,7 @@ app.logger.disabled = True
 log = logging.getLogger('werkzeug')
 log.disabled = True
 
-logger = get_logger(__name__)
+logger = get_logger(__file__)
 
 
 def _find(query, one=False):
@@ -41,50 +42,60 @@ def _insert(data, one=True):
 
 
 def preempt_nodes(request_data):
-    with lock:
-        osg_nodes = _find({"$and": [{"node_type": request_data['node_type']}, {"pool": "osg"}]})
-        if osg_nodes.shape[0] == 0:
-            return 0
-        osg_nodes.sort_values(by=['inuse_cpus'], inplace=True).iloc[:int(request_data['node_cnt'])]
+    osg_nodes = _find({"$and": [{"node_type": request_data['node_type']}, {"pool": "osg"}]})
+    osg_nodes_cnt = 0
+    if osg_nodes.shape[0] > 0:
+        osg_nodes.sort_values(by=['inuse_cpus'], inplace=True)
+        osg_nodes = osg_nodes.iloc[:int(request_data['node_cnt'])]
         osg_nodes_cnt = _update(
             {"HOST_NAME (PHYSICAL)": {"$in": osg_nodes['HOST_NAME (PHYSICAL)'].to_list()}}, 
             {"$set": {"status": "inuse", "pool": "chameleon", "inuse_cpus": 0, "inuse_memory": 0, "backfill": []}},
             one=False)
-    
-    payload = {"backfills": osg_nodes['backfill'].to_numpy().squeeze()}
-    dbs.emit_msg("osg_jobs_exchange", "terminate_osg_job", json.dumps(payload), rm_channel)
-    logger.info('osg --> chameleon: %d' % osg_nodes_cnt)
+        
+        osg_jobs = []
+        for _, row in osg_nodes.iterrows():
+            osg_jobs.extend(row['backfill'])
+        dbs.emit_msg("osg_jobs_exchange", "terminate_osg_job", json.dumps({"backfills": osg_jobs}), rm_channel)
+        # logger.info('osg --> chameleon: %d' % osg_nodes_cnt)
     return osg_nodes_cnt
 
 
 @app.route('/acquire_nodes', methods=['POST'])
 def acquire_nodes():
     request_data = request.get_json()
-    print(request_data, _find({"$and": [{"status": "free"}, {"pool": "chameleon"}]}).shape[0], _find({"$and": [{"status": "inuse"}, {"pool": "osg"}]}).shape[0])
     if request_data['pool'] == 'chameleon':
         with lock:
+            ch_nodes_cnt = 0
+            osg_nodes_cnt = 0
+            print('chameleon-inuse:', _find({"$and": [{"status": "inuse"}, {"pool": "chameleon"}]}).shape[0], 
+                    'chameleon-free:', _find({"$and": [{"status": "free"}, {"pool": "chameleon"}]}).shape[0], 
+                    'osg-inuse:', _find({"$and": [{"status": "inuse"}, {"pool": "osg"}]}).shape[0])
             ch_nodes = _find({"$and": [{"node_type": request_data['node_type']}, {"status": "free"}, {"pool": "chameleon"}]}).iloc[:int(request_data['node_cnt'])]
-            ch_nodes_cnt = _update(filter={"HOST_NAME (PHYSICAL)": {"$in": ch_nodes['HOST_NAME (PHYSICAL)'].to_list()}}, operations={"$set": {"status": "inuse"}}, one=False)
-        if ch_nodes_cnt < request_data['node_cnt']:
-            request_data['node_cnt'] -= ch_nodes_cnt
-            osg_nodes_cnt = preempt_nodes(request_data)
-        if ch_nodes_cnt + osg_nodes_cnt < request_data['node_cnt']:
-            with lock:
+            if ch_nodes.shape[0] > 0:
+                ch_nodes_cnt = _update(filter={"HOST_NAME (PHYSICAL)": {"$in": ch_nodes['HOST_NAME (PHYSICAL)'].to_list()}}, operations={"$set": {"status": "inuse"}}, one=False)
+            if ch_nodes_cnt < request_data['node_cnt']:
+                temp = request_data.copy()
+                temp['node_cnt'] -= ch_nodes_cnt
+                osg_nodes_cnt = preempt_nodes(temp)
+
+            if ch_nodes_cnt + osg_nodes_cnt < request_data['node_cnt']:
                 inuse_nodes = _find({"$and": [
                     {"node_type": request_data['node_type']}, 
                     {"pool": "chameleon"},
                     {"status": "inuse"}]}).iloc[:ch_nodes_cnt + osg_nodes_cnt]
-                _update(filter={"HOST_NAME (PHYSICAL)": {"$in": inuse_nodes['HOST_NAME (PHYSICAL)'].to_list()}}, 
-                        operations= {"$set": {"status": "free", "pool": 'chameleon'}}, one=False)
-            logger.info('chameleon: available_nodes %d < acquire_nodes %d' % (ch_nodes_cnt + osg_nodes_cnt, request_data['node_cnt']))
-            return 'Fail', 202
+                if inuse_nodes.shape[0] > 0:
+                    _update(filter={"HOST_NAME (PHYSICAL)": {"$in": inuse_nodes['HOST_NAME (PHYSICAL)'].to_list()}}, 
+                                operations= {"$set": {"status": "free", "pool": 'chameleon'}}, one=False)
+                # logger.info('chameleon: available_nodes %d < acquire_nodes %d' % (ch_nodes_cnt + osg_nodes_cnt, request_data['node_cnt']))
+                return 'Fail', 202
     elif request_data['pool'] == 'osg':
         with lock:
             result = _update(filter={"$and": [{"status": "free"}, {"pool": "chameleon"}]}, operations={"$set": {"status": "inuse", "pool": "osg"}})
         if result == 0:
             return 'no node is available for osg', 202
         else:
-            logger.info('chameleon --> osg: %d' % result)
+            pass
+            # logger.info('chameleon --> osg: %d' % result)
     return 'OK', 200
 
 
@@ -102,7 +113,6 @@ def release_nodes():
     logger.error('chameleon: release_nodes %d > inuse_nodes %d' % (int(request_data['node_cnt']), inuse_nodes.shape[0]))
     return 'release node %d < inuse nodes %d' % (request_data['node_cnt'], inuse_nodes.shape[0]), 202
         
-            
 
 @app.route('/find', methods=['POST'])
 def find():
@@ -159,7 +169,7 @@ def process_machine_event(ch, method, properties, body):
             backfills = machine['backfill']
             if len(backfills) > 0:
                 payload = {"backfills": backfills}
-                dbs.emit_msg("osg_jobs_exchange", "terminate_osg_job", json.dumps(payload), rm_channel)
+                dbs.emit_msg("osg_jobs_exchange", "terminate_osg_job", json.dumps(payload), ch)
             machine_event.update({
                 "pool": "chameleon",
                 "status": "inactive",
@@ -169,7 +179,6 @@ def process_machine_event(ch, method, properties, body):
             })
             with lock:
                 _update(filter={"HOST_NAME (PHYSICAL)": machine_id}, operations={"$set": machine_event})
-
 
 
 if __name__ == '__main__':
@@ -191,5 +200,4 @@ if __name__ == '__main__':
     # listen machine events
     thread1 = threading.Thread(name='listen_machine_events', target=dbs.consume, args=('machine_events_exchange', 'machine_events_queue', 'machine_event', process_machine_event), daemon=True)
     thread1.start()
-    app.run(host=args.host, port=5000, debug=False)
-    thread1.join()
+    app.run(host=args.host, port=5000, debug=True)

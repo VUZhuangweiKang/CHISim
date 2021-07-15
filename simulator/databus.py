@@ -13,7 +13,7 @@ def init_connection():
 
     params = (pika.ConnectionParameters(
         host=connect_info['host'],
-        heartbeat=10,
+        heartbeat=0,
         blocked_connection_timeout=3600,
         credentials=pika.credentials.PlainCredentials(username=connect_info['username'], password=connect_info['password'], erase_on_connect=True),
         connection_attempts=10, retry_delay=1)

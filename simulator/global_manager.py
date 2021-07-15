@@ -1,3 +1,4 @@
+import time
 import databus as dbs
 import json
 import influxdb
@@ -24,6 +25,6 @@ if __name__ == '__main__':
     gm_channel.queue_declare(queue='osg_jobs_queue')
     gm_channel.queue_declare(queue='internal_queue')
     
+    # send hearbeats periodically to maintain activiness of consumer connections
     while True:
-        pass
-
+        time.sleep(3)

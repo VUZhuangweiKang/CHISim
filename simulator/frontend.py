@@ -51,16 +51,14 @@ def process_usr_requests(ch, method, properties, body):
             slide_window.append(usr_request)
             if len(prediction_window) > 0:
                 if not warm_down:
-                    logger.info('Frontend has been warmed up.')
+                    logger.info('-------------------- Frontend has been warmed up--------------------')
                 warm_down = True
                 remaining = prediction_window[0]['node_cnt'] - usr_request['node_cnt']
                 payload = {'node_type': usr_request['node_type'], 'node_cnt': usr_request['node_cnt'], 'pool': 'chameleon'}
                 response = requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload)
                 if remaining > 0:
                     assert response.status_code == 200   # since we have reserved node when performing prediction
-                    prediction_window[0]['node_cnt'] = remaining
-                else:
-                    prediction_window[0]['node_cnt'] = 0
+                prediction_window[0]['node_cnt'] = remaining
             else:
                 payload = {'node_type': usr_request['node_type'], 'node_cnt': usr_request['node_cnt'], 'pool': 'chameleon'}
                 response = requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload)
@@ -73,7 +71,10 @@ def process_usr_requests(ch, method, properties, body):
         else:
             lease_end = get_timestamp(usr_request['end_on'])
         with lock:
+            usr_request['sim_start_date'] = datetime.now().timestamp()
             active_leases_tree[lease_end] = usr_request
+    else:
+        logger.error('response failed')
 
 
 def trace_active_lease():
@@ -81,13 +82,16 @@ def trace_active_lease():
     while True:
         with lock:
             if not active_leases_tree.is_empty():
-                recent_end = active_leases_tree.min_item()[1]
+                key, recent_end = active_leases_tree.min_item()
                 start_time = get_timestamp(recent_end['start_on'])
                 end_time = get_timestamp(recent_end['end_on'])
                 if (end_time-start_time) <= ((datetime.now().timestamp()-sim_start_time)*scale_ratio):
                     payload = {'node_type': recent_end['node_type'], 'node_cnt': recent_end['node_cnt']}
                     requests.post(url='%s/release_nodes' % rsrc_mgr_url, json=payload)
-                    active_leases_tree.pop_min()
+                    active_leases_tree.remove(key)
+                    recent_end['sim_end_date'] = datetime.now().timestamp()
+                    recent_end['sim_duration'] = recent_end['sim_end_date'] - recent_end['sim_start_date']
+                    ch_lease_collection.insert_one(recent_end)
 
 
 ########## Request Forecaster ###########
@@ -105,6 +109,9 @@ def make_prediction():
         if len(prediction_window) > 0 and prediction_window[0]['node_cnt'] > 0:
             payload = {'node_type': prediction_window[0]['node_type'], 'node_cnt': prediction_window[0]['node_cnt'], 'pool': 'chameleon'}
             requests.post(url='%s/release_nodes' % rsrc_mgr_url, json=payload)
+            logger.info('pred_error: %d' % prediction_window[0]['node_cnt'])
+        if len(prediction_window) > 0:
+            prediction_window.pop(0)
 
         # data smoothing and normalization
         smoother = spectral_smoother(rsw)

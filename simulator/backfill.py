@@ -57,7 +57,6 @@ def try_submit():
                 # acquire node from chameleon pool
                 payload = {"node_type": "compute_haswell", "node_cnt": 1, "pool": "osg"}
                 requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload)
-        time.sleep(0.1)
 
             
 def process_job(ch, method, properties, body):
@@ -87,8 +86,6 @@ def process_job(ch, method, properties, body):
             with lock:
                 running_job_tree.remove(key=osg_job['JobSimExpectCompleteDate'])
                 waiting_queue.append(osg_job)
-        else:
-            raise
 
 
 def trace_active_jobs():
@@ -97,7 +94,7 @@ def trace_active_jobs():
         with lock:
             if not running_job_tree.is_empty():
                 osg_job = running_job_tree.min_item()[1]
-                if osg_job['JobDuration']/scale_ratio <= (datetime.now().timestamp() - osg_job['JobSimLastStartDate']):
+                if osg_job['JobDuration'] <= scale_ratio*(datetime.now().timestamp() - osg_job['JobSimLastStartDate']):
                     update_req = {
                         "filter": {"$and":[{"HOST_NAME (PHYSICAL)": osg_job['Machine']}, {"pool": "osg"}]},
                         "operations": {
@@ -140,7 +137,7 @@ if __name__ == '__main__':
     waiting_queue = []
 
     running_job_tree = FastRBTree()
-    thread1 = threading.Thread(name='listen_osg_jobs', target=dbs.consume, args=('osg_jobs_exchange', 'osg_jobs_queue', 'osg_job', process_job), daemon=True)
+    thread1 = threading.Thread(name='listen_osg_jobs', target=dbs.consume, args=('osg_jobs_exchange', 'osg_jobs_queue', None, process_job), daemon=True)
     thread2 = threading.Thread(name='submit_osg_jobs', target=try_submit, daemon=True)
     thread1.start()
     thread2.start()
