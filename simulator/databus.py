@@ -3,6 +3,7 @@ import time
 import os
 import json
 import pika
+from datetime import datetime
 from pika.exchange_type import ExchangeType
 
 
@@ -14,7 +15,6 @@ def init_connection():
     params = (pika.ConnectionParameters(
         host=connect_info['host'],
         heartbeat=0,
-        blocked_connection_timeout=3600,
         credentials=pika.credentials.PlainCredentials(username=connect_info['username'], password=connect_info['password'], erase_on_connect=True),
         connection_attempts=10, retry_delay=1)
     )
@@ -42,8 +42,8 @@ def emit_timeseries(exchange, routing_key, payload, index_col, scale_ratio):
         index_col_name = df.columns[index_col]
         for index, row in df.iterrows():
             if last_send_at:
-                sleep_sec = (pd.to_datetime(row[index_col_name]) - pd.to_datetime(last_send_at)).total_seconds()
-                time.sleep(sleep_sec/scale_ratio)
+                sleep_sec = (pd.to_datetime(row[index_col_name]) - pd.to_datetime(last_send_at)).total_seconds()/scale_ratio
+                time.sleep(sleep_sec)
             channel.basic_publish(
                 exchange=exchange,
                 routing_key=routing_key,
@@ -76,7 +76,9 @@ def clear_databus(channel):
     channel.exchange_delete('internal_exchange')
     channel.exchange_delete('user_requests_exchange')
     channel.exchange_delete('machine_events_exchange')
+    channel.exchange_delete('osg_jobs_exchange')
 
     channel.queue_delete('user_requests_queue')
     channel.queue_delete('machine_events_queue')
     channel.queue_delete('internal_queue')
+    channel.queue_delete('osg_jobs_queue')

@@ -1,17 +1,21 @@
 import logging
 from re import T
 from flask.helpers import make_response
+from pymongo import database
 from utils import get_logger
 import databus as dbs
 from flask import Flask, jsonify
 import json
 import pymongo
+from influxdb import InfluxDBClient
 import argparse
 import threading
 from threading import RLock
 import pandas as pd
 import time
 from flask import request
+from monitor import Monitor
+
 
 app = Flask(__name__)
 app.logger.disabled = True
@@ -19,6 +23,7 @@ log = logging.getLogger('werkzeug')
 log.disabled = True
 
 logger = get_logger(__file__)
+monitor = Monitor()
 
 
 def _find(query, one=False):
@@ -56,7 +61,7 @@ def preempt_nodes(request_data):
         for _, row in osg_nodes.iterrows():
             osg_jobs.extend(row['backfill'])
         dbs.emit_msg("osg_jobs_exchange", "terminate_osg_job", json.dumps({"backfills": osg_jobs}), rm_channel)
-        # logger.info('osg --> chameleon: %d' % osg_nodes_cnt)
+        logger.info('osg --> chameleon: %d' % osg_nodes_cnt)
     return osg_nodes_cnt
 
 
@@ -67,9 +72,6 @@ def acquire_nodes():
         with lock:
             ch_nodes_cnt = 0
             osg_nodes_cnt = 0
-            print('chameleon-inuse:', _find({"$and": [{"status": "inuse"}, {"pool": "chameleon"}]}).shape[0], 
-                    'chameleon-free:', _find({"$and": [{"status": "free"}, {"pool": "chameleon"}]}).shape[0], 
-                    'osg-inuse:', _find({"$and": [{"status": "inuse"}, {"pool": "osg"}]}).shape[0])
             ch_nodes = _find({"$and": [{"node_type": request_data['node_type']}, {"status": "free"}, {"pool": "chameleon"}]}).iloc[:int(request_data['node_cnt'])]
             if ch_nodes.shape[0] > 0:
                 ch_nodes_cnt = _update(filter={"HOST_NAME (PHYSICAL)": {"$in": ch_nodes['HOST_NAME (PHYSICAL)'].to_list()}}, operations={"$set": {"status": "inuse"}}, one=False)
@@ -86,7 +88,7 @@ def acquire_nodes():
                 if inuse_nodes.shape[0] > 0:
                     _update(filter={"HOST_NAME (PHYSICAL)": {"$in": inuse_nodes['HOST_NAME (PHYSICAL)'].to_list()}}, 
                                 operations= {"$set": {"status": "free", "pool": 'chameleon'}}, one=False)
-                # logger.info('chameleon: available_nodes %d < acquire_nodes %d' % (ch_nodes_cnt + osg_nodes_cnt, request_data['node_cnt']))
+                logger.info('chameleon: available_nodes %d < acquire_nodes %d' % (ch_nodes_cnt + osg_nodes_cnt, request_data['node_cnt']))
                 return 'Fail', 202
     elif request_data['pool'] == 'osg':
         with lock:
@@ -95,7 +97,10 @@ def acquire_nodes():
             return 'no node is available for osg', 202
         else:
             pass
-            # logger.info('chameleon --> osg: %d' % result)
+            logger.info('chameleon --> osg: %d' % result)
+    
+    monitor.measure_rsrc()
+
     return 'OK', 200
 
 
@@ -108,8 +113,10 @@ def release_nodes():
             {"pool": "chameleon"},
             {"status": "inuse"}]}).iloc[:int(request_data['node_cnt'])]
         if inuse_nodes.shape[0] == request_data['node_cnt']:
-            _update(filter={"HOST_NAME (PHYSICAL)": {"$in": inuse_nodes['HOST_NAME (PHYSICAL)'].to_list()}}, operations= {"$set": {"status": "free", "pool": 'chameleon'}}, one=False)
-            return 'OK', 200
+            result = _update(filter={"HOST_NAME (PHYSICAL)": {"$in": inuse_nodes['HOST_NAME (PHYSICAL)'].to_list()}}, operations= {"$set": {"status": "free", "pool": 'chameleon'}}, one=False)
+            if result == request_data['node_cnt']:
+                return 'OK', 200
+    monitor.measure_rsrc()
     logger.error('chameleon: release_nodes %d > inuse_nodes %d' % (int(request_data['node_cnt']), inuse_nodes.shape[0]))
     return 'release node %d < inuse nodes %d' % (request_data['node_cnt'], inuse_nodes.shape[0]), 202
         
@@ -187,10 +194,14 @@ if __name__ == '__main__':
     parser.add_argument('--mongo', type=str, default='mongodb://chi-sim:chi-sim@127.0.0.1:27017', help='MongoDB connection URL')
     args = parser.parse_args()
 
+    with open('influxdb.json') as f:
+        db_info = json.load(f)
+    influx_client = InfluxDBClient(**db_info, database='ChameleonSimulator')
+
     mongo_client = pymongo.MongoClient(args.mongo)
-    mongo_client.drop_database('ChameleonSimulator')
     db = mongo_client['ChameleonSimulator']
     resource_pool = db['resource_pool']
+
     with open('hardware.json') as f:
         hardware_profile = json.load(f)
     dbs_connection = dbs.init_connection()

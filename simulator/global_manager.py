@@ -2,15 +2,20 @@ import time
 import databus as dbs
 import json
 import influxdb
+import pymongo
 
 
 if __name__ == '__main__':
     with open('influxdb.json') as f:
         db_info = json.load(f)
-    db_client = influxdb.InfluxDBClient(host=db_info['host'], username=db_info['username'], password=db_info['password'])
+    db_client = influxdb.InfluxDBClient(**db_info)
     db_list = [db['name'] for db in db_client.get_list_database()]
-    if 'UserRequests' not in db_list:
-        db_client.create_database('UserRequests')
+    if 'ChameleonSimulator' in db_list:
+        db_client.drop_database('ChameleonSimulator')
+    db_client.create_database('ChameleonSimulator')
+
+    mongo_client = pymongo.MongoClient('mongodb://chi-sim:chi-sim@127.0.0.1:27017')
+    mongo_client.drop_database('ChameleonSimulator')
 
     dbs_connection = dbs.init_connection()
     gm_channel = dbs_connection.channel()

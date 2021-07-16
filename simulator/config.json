@@ -1,0 +1,14 @@
+{
+    "rabbitmq":{
+        "host": "127.0.0.1",
+        "username": "chi-sim",
+        "password": "chi-sim"
+    },
+    "influxdb": {
+        "host": "127.0.0.1",
+        "username": "chi-sim",
+        "password": "chi-sim"
+    },
+    "mongodb": "mongodb://chi-sim:chi-sim@127.0.0.1:27017",
+    "rsrc_mgr": "http://127.0.0.1:5000"
+}
