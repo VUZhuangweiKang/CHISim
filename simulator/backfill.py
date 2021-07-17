@@ -85,8 +85,7 @@ def trace_active_job():
                         osg_job_collection.insert_one(osg_job)
                     else:
                         osg_job['JobSimLastSubmitDate'] = datetime.now().timestamp()
-                        if osg_job['ResubmitCount'] == 0:
-                            terminates += 1
+                        terminates += 1
                         osg_job['ResubmitCount'] += 1
                         osg_job['JobSimStatus'] = 'pending'
                         waiting_queue.append(osg_job)

@@ -44,8 +44,8 @@ def process_usr_requests(ch, method, properties, body):
         sim_start_time = datetime.now().timestamp()
     
     time_diff = (get_timestamp(usr_request['start_on']) - get_timestamp(usr_request['created_at'])) / 60
-    if time_diff < 0:
-        return
+    # if time_diff < 0:
+    #     return
     rc = 200
     if time_diff > 2:
         json_body = [{'measurement': 'in_advance', 'fields': usr_request, 'time': usr_request['created_at']}]
@@ -60,7 +60,10 @@ def process_usr_requests(ch, method, properties, body):
                 logger.info('-------------------- Frontend has been warmed up--------------------')
             warm_down = True
             remaining = prediction_window[0]['node_cnt'] - usr_request['node_cnt']
-            if remaining < 0: # since we have reserved node when performing prediction
+            if prediction_window[0]['node_cnt'] > 0 and remaining < 0: # since we have reserved node when performing prediction
+                payload = {'node_type': usr_request['node_type'], 'node_cnt': -remaining, 'pool': 'chameleon'}
+                rc = requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload).status_code
+            elif prediction_window[0]['node_cnt'] < 0 and remaining < 0:
                 payload = {'node_type': usr_request['node_type'], 'node_cnt': usr_request['node_cnt'], 'pool': 'chameleon'}
                 rc = requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload).status_code
             prediction_window[0]['node_cnt'] = remaining
@@ -85,20 +88,20 @@ def trace_active_lease():
     global active_leases_tree, sim_start_time
     completed = 0
     while True:
-        while not active_leases_tree.is_empty():
+        if not active_leases_tree.is_empty():
             end_time, recent_end = active_leases_tree.min_item()
             start_time = get_timestamp(recent_end['start_on'])
             if (end_time-start_time) <= ((datetime.now().timestamp()-sim_start_time)*scale_ratio):
+                active_leases_tree.remove(end_time)
                 payload = {'node_type': recent_end['node_type'], 'node_cnt': recent_end['node_cnt']}
                 requests.post(url='%s/release_nodes' % rsrc_mgr_url, json=payload)
-                active_leases_tree.remove(end_time)
                 recent_end['sim_end_date'] = datetime.now().timestamp()
                 recent_end['sim_duration'] = recent_end['sim_end_date'] - recent_end['sim_start_date']
                 ch_lease_collection.insert_one(recent_end)
                 completed += 1
                 monitor.monitor_chameleon(completed)
-            else:
-                break
+            # else:
+            #     break
 
 
 ########## Request Forecaster ###########
@@ -113,9 +116,10 @@ def make_prediction():
     # when the sampled slide window is full, make prediction
     if rsw.shape[0] >= int(sw_len/fs_len):
         # some nodes are left in the previous prediction window
-        if len(prediction_window) > 0:
+        if len(prediction_window) > 0 and prediction_window[0]['node_cnt'] > 0:
             payload = {'node_type': prediction_window[0]['node_type'], 'node_cnt': prediction_window[0]['node_cnt'], 'pool': 'chameleon'}
             requests.post(url='%s/release_nodes' % rsrc_mgr_url, json=payload)
+        if len(prediction_window) > 0:
             logger.info('pred_error: %d' % prediction_window[0]['node_cnt'])
             prediction_window.pop(0)
 
@@ -136,7 +140,7 @@ def make_prediction():
             if response.status_code != 200:
                 # predicted node_cnt can't be deployed, give up prediction at this step, add 0 as placeholder
                 payload = {'node_type': "compute_haswell", 'node_cnt': 0, 'pool': 'chameleon'}
-                requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload)
+                # requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload)
             prediction_window.append(payload)
 
         # move sliding window --> fs_len
