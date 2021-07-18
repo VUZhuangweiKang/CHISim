@@ -3,10 +3,9 @@ import functools
 import logging
 import pika
 from pika.exchange_type import ExchangeType
+from utils import get_logger
 
-LOG_FORMAT = ('%(levelname) -10s %(asctime)s %(name) -30s %(funcName) '
-              '-35s %(lineno) -5d: %(message)s')
-LOGGER = logging.getLogger(__name__)
+LOGGER = get_logger(__name__)
 
 
 class AsyncClient(object):
@@ -45,42 +44,33 @@ class AsyncClient(object):
         LOGGER.info('Channel opened')
         self.channel = channel
         self.add_on_channel_close_callback()
+        self.clean_amqp()
+        self.setup_exchange()
 
     def add_on_channel_close_callback(self):
         LOGGER.info('Adding channel close callback')
         self.channel.add_on_close_callback(self.on_channel_closed)
 
-    def setup_exchange(self, exchange):
-        LOGGER.info('Declaring exchange: %s', exchange)
-        cb = functools.partial(
-            self.on_exchange_declareok, userdata=exchange)
-        self.channel.exchange_declare(
-            exchange=exchange,
-            exchange_type=ExchangeType.topic,
-            callback=cb)
+    def setup_exchange(self):
+        pass
 
     def on_exchange_declareok(self, _unused_frame, userdata):
         LOGGER.info('Exchange declared: %s', userdata)
+        self.setup_queue()
 
-    def setup_queue(self, queue_name):
-        LOGGER.info('Declaring queue %s', queue_name)
-        cb = functools.partial(self.on_queue_declareok, userdata=queue_name)
-        self.channel.queue_declare(queue=queue_name, callback=cb)
+    def setup_queue(self):
+        pass
 
     def on_queue_declareok(self, _unused_frame, userdata):
         queue_name = userdata
         LOGGER.info('Queue declared: %s', queue_name)
+        self.bind_queue()
 
-    def bind_queue(self, exchange_name, queue_name, routing_key):
-        cb = functools.partial(self.on_queue_bindok, userdata=queue_name)
-        self.channel.queue_bind(
-            queue_name,
-            exchange_name,
-            routing_key=routing_key,
-            callback=cb)
+    def bind_queue(self):
+        pass
 
     def on_queue_bindok(self, _unused_frame, userdata):
-        LOGGER.info('Queue bound')
+        pass
 
     def close_channel(self):
         if self.channel is not None:
@@ -103,10 +93,12 @@ class AsyncClient(object):
             self.connection.ioloop.start()
         except KeyboardInterrupt:
             self.stop()
-            if (self.connection is not None and
-                    not self.connection.is_closed):
+            if (self.connection is not None and not self.connection.is_closed):
                 self.connection.ioloop.start()
         LOGGER.info('Stopped')
+
+    def clean_amqp(self):
+        pass
 
     def stop(self):
         pass

@@ -1,5 +1,5 @@
 import argparse
-from AsyncDatabus.Publisher import Publisher
+from workload import WorkloadStream
 
 
 if __name__ == '__main__':
@@ -9,8 +9,7 @@ if __name__ == '__main__':
     parser.add_argument('--scale_ratio', type=float, help='The ratio for scaling down the time series data', default=100000)
     args = parser.parse_args()
     args = vars(args)
-    args.update({'exchange': 'osg_jobs_exchange', 'routing_key': 'osg_job'})
+    args.update({'exchange': 'osg_jobs_exchange', 'queue': 'osg_jobs_queue', 'routing_key': 'osg_job'})
 
-    pub = Publisher('amqp://chi-sim:chi-sim@localhost:5672/%2F?connection_attempts=3&heartbeat=0')
-    pub.run()
-    pub.emit_timeseries(**args)
+    osg_workload = WorkloadStream(amqpurl='amqp://chi-sim:chi-sim@localhost:5672/%2F?connection_attempts=3&heartbeat=0', **args)
+    osg_workload.run()

@@ -48,7 +48,8 @@ def data_preprocess(df, slot):
 def get_logger(logger_name, log_file=None):
     logger = logging.getLogger(logger_name)
     logger.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('%(name)s :: %(levelname)-8s :: %(message)s')
+    formatter = logging.Formatter('%(levelname) -10s %(asctime)s %(name) -30s %(funcName) '
+              '-35s %(lineno) -5d: %(message)s')
 
     if log_file:
         fl = logging.FileHandler(log_file)
