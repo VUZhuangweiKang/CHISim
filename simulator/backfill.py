@@ -1,10 +1,9 @@
 from bintrees import FastRBTree
-import databus as dbs
+from AsyncDatabus.Consumer import Consumer
 import threading
 from threading import RLock
 import json
 import argparse
-import time
 from datetime import datetime
 import pymongo
 import requests
@@ -146,8 +145,13 @@ if __name__ == '__main__':
     waiting_queue = []
     running_job_tree = FastRBTree()
 
-    thread1 = threading.Thread(name='listen_osg_jobs', target=dbs.consume, args=('osg_jobs_exchange', 'osg_jobs_queue', 'osg_job', receive_job), daemon=True)
-    thread2 = threading.Thread(name='terminate_osg_jobs', target=dbs.consume, args=('osg_jobs_exchange', 'osg_jobs_queue', 'terminate_osg_job', terminate_job), daemon=True)
+    consumer = Consumer('amqp://chi-sim:chi-sim@localhost:5672/%2F?connection_attempts=3&heartbeat=0')
+    consumer.run()
+    consumer.bind_queue('osg_jobs_exchange', 'osg_jobs_queue', 'osg_job')
+    consumer.bind_queue('osg_jobs_exchange', 'osg_jobs_queue', 'terminate_osg_job')
+
+    thread1 = threading.Thread(name='listen_osg_jobs', target=consumer.start_consuming, args=('osg_jobs_queue', receive_job), daemon=True)
+    thread2 = threading.Thread(name='terminate_osg_jobs', target=consumer.start_consuming, args=('osg_jobs_queue', terminate_job), daemon=True)
     thread3 = threading.Thread(name='trace_active_jobs', target=trace_active_job, daemon=True)
     thread1.start()
     thread2.start()

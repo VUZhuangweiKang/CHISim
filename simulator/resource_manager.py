@@ -1,9 +1,8 @@
 import logging
-from re import T
 from flask.helpers import make_response
-from pymongo import database
 from utils import get_logger
-import databus as dbs
+from AsyncDatabus.Publisher import Publisher
+from AsyncDatabus.Consumer import Consumer
 from flask import Flask, jsonify
 import json
 import pymongo
@@ -12,7 +11,6 @@ import argparse
 import threading
 from threading import RLock
 import pandas as pd
-import time
 from flask import request
 from monitor import Monitor
 
@@ -60,7 +58,7 @@ def preempt_nodes(request_data):
         osg_jobs = []
         for _, row in osg_nodes.iterrows():
             osg_jobs.extend(row['backfill'])
-        dbs.emit_msg("osg_jobs_exchange", "terminate_osg_job", json.dumps({"backfills": osg_jobs}), rm_channel)
+        pub.emit_msg(json.dumps({"backfills": osg_jobs}), "osg_jobs_exchange", "terminate_osg_job")
         logger.info('osg --> chameleon: %d' % osg_nodes_cnt)
     return osg_nodes_cnt
 
@@ -176,7 +174,7 @@ def process_machine_event(ch, method, properties, body):
             backfills = machine['backfill']
             if len(backfills) > 0:
                 payload = {"backfills": backfills}
-                dbs.emit_msg("osg_jobs_exchange", "terminate_osg_job", json.dumps(payload), ch)
+                pub.emit_msg(json.dumps(payload), "osg_jobs_exchange", "terminate_osg_job")
             machine_event.update({
                 "pool": "chameleon",
                 "status": "inactive",
@@ -204,11 +202,13 @@ if __name__ == '__main__':
 
     with open('hardware.json') as f:
         hardware_profile = json.load(f)
-    dbs_connection = dbs.init_connection()
-    rm_channel = dbs_connection.channel()
+    pub = Publisher('amqp://chi-sim:chi-sim@localhost:5672/%2F?connection_attempts=3&heartbeat=0')
+    pub.run()
+    consumer = Consumer('amqp://chi-sim:chi-sim@localhost:5672/%2F?connection_attempts=3&heartbeat=0')
+    consumer.run()
 
     lock = RLock()
     # listen machine events
-    thread1 = threading.Thread(name='listen_machine_events', target=dbs.consume, args=('machine_events_exchange', 'machine_events_queue', 'machine_event', process_machine_event), daemon=True)
+    thread1 = threading.Thread(name='listen_machine_events', target=consumer.start_consuming, args=('machine_events_queue', process_machine_event), daemon=True)
     thread1.start()
     app.run(host=args.host, port=5000, debug=True)

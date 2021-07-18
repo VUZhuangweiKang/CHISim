@@ -7,7 +7,7 @@ from datetime import datetime
 from pika.exchange_type import ExchangeType
 
 
-def init_connection(sync=True):
+def init_connection():
     assert os.path.exists('rabbitmq.json')
     with open('rabbitmq.json') as f:
         connect_info = json.load(f)
@@ -19,6 +19,8 @@ def init_connection(sync=True):
     )
 
     connection = pika.BlockingConnection(parameters=params)
+    while not connection.is_open:
+        pass
     return connection
 
 
@@ -60,9 +62,7 @@ def emit_timeseries(exchange, routing_key, payload, index_col, scale_ratio):
 
 
 def consume(exchange, queue, binding_key, callback):
-    connection = init_connection(sync=False)
-    while not connection.is_open:
-        pass
+    connection = init_connection()
     channel = connection.channel()
     while not channel.is_open:
         pass

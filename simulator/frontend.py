@@ -1,14 +1,9 @@
-from pymongo import database, monitor
-from pymongo.message import query
-import databus as dbs
+from AsyncDatabus.Consumer import Consumer
 import threading
-from threading import RLock
 import json
 import argparse
 from influxdb import InfluxDBClient
 from bintrees import FastRBTree
-from datetime import datetime
-import requests
 import pymongo
 from utils import *
 import requests
@@ -252,7 +247,10 @@ if __name__ == '__main__':
     mongodb = mongo_client['ChameleonSimulator']
     ch_lease_collection = mongodb['chameleon_leases']
 
-    thread1 = threading.Thread(name='listen_user_requests', target=dbs.consume, args=('user_requests_exchange', 'user_requests_queue', 'raw_request', process_usr_requests), daemon=True)
+    consumer = Consumer('amqp://chi-sim:chi-sim@localhost:5672/%2F?connection_attempts=3&heartbeat=0')
+    consumer.run()
+    consumer.bind_queue('user_requests_exchange', 'user_requests_queue', 'raw_request')
+    thread1 = threading.Thread(name='listen_user_requests', target=consumer.start_consuming, args=('user_requests_queue', process_usr_requests), daemon=True)
     thread2 = threading.Thread(name='trace active lease', target=trace_active_lease, args=(), daemon=True)
     thread1.start()
     thread2.start()
