@@ -68,7 +68,7 @@ def preempt_nodes(request_data):
 @app.route('/acquire_nodes', methods=['POST'])
 def acquire_nodes():
     request_data = request.get_json()
-    if request_data['pool'] == 'chameleon':
+    if request_data['pool'] == 'chameleon': 
         ch_nodes_cnt = 0
         osg_nodes_cnt = 0
         ch_nodes = _find({"$and": [{"node_type": request_data['node_type']}, {"status": "free"}, {"pool": "chameleon"}]}).iloc[:int(request_data['node_cnt'])]
@@ -95,6 +95,9 @@ def acquire_nodes():
             return 'no node is available for osg', 202
         else:
             logger.info('chameleon --> osg: %d' % result)
+    
+    if config['simulation']['enable_monitor']:
+        monitor.measure_rsrc()
 
     return 'OK', 200
 
@@ -109,7 +112,6 @@ def release_nodes():
     if inuse_nodes.shape[0] >= request_data['node_cnt']:
         result = _update(filter={"HOST_NAME (PHYSICAL)": {"$in": inuse_nodes['HOST_NAME (PHYSICAL)'].to_list()}}, operations= {"$set": {"status": "free", "pool": 'chameleon'}}, one=False)
         if result == request_data['node_cnt']:
-            # logger.info('release nodes %d' % result)
             return 'OK', 200
     logger.error('chameleon: release_nodes %d > inuse_nodes %d' % (int(request_data['node_cnt']), inuse_nodes.shape[0]))
     return 'release node %d < inuse nodes %d' % (request_data['node_cnt'], inuse_nodes.shape[0]), 202

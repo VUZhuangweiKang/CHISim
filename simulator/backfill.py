@@ -21,7 +21,9 @@ get_timestamp = lambda time_str: datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'
 def process_job():
     global waiting_queue, running_job_tree
     while True:
+        queue_lock.acquire()
         if len(waiting_queue) == 0:
+            queue_lock.release()
             continue
         osg_job = waiting_queue[0]
         osg_job['JobSimLastSubmitDate'] = datetime.now().timestamp()
@@ -54,22 +56,15 @@ def process_job():
                     # moving job from waiting queue to running queue
                     waiting_queue.pop(0)
                     temp = osg_job['JobSimExpectCompleteDate'] + randint(0, 1000000)/1000000
-                    running_job_tree[temp] = osg_job
+                    with tree_lock:
+                        running_job_tree[temp] = osg_job
                     flag = True
+        queue_lock.release()
         
         if not flag:
             # acquire node from chameleon pool
             payload = {"node_type": "compute_haswell", "node_cnt": 1, "pool": "osg"}
             requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload)
-
-
-def measure_inuse_nodes():
-    inuse_machines = []
-    for key in running_job_tree.keys():
-        machine = running_job_tree[key]['Machine']
-        inuse_machines.append(machine)
-    json_body = [{'measurement': 'osg_inuse', 'fields': {'osg-inuse': len(set(inuse_machines))}}]
-    monitor.influx_client.write_points(json_body)
 
 
 def trace_active_job():
@@ -78,7 +73,7 @@ def trace_active_job():
     while True:
         if config['simulation']['enable_monitor']:
             monitor.monitor_osg_jobs(running_job_tree.count, len(waiting_queue), completes, terminates)
-            measure_inuse_nodes()
+        tree_lock.acquire()
         while not running_job_tree.is_empty():
             end_date, osg_job = running_job_tree.min_item()
             if osg_job['JobDuration'] <= scale_ratio*(datetime.now().timestamp() - osg_job['JobSimLastStartDate']):
@@ -100,14 +95,9 @@ def trace_active_job():
                     osg_job_collection.insert_one(osg_job)
                     running_job_tree.remove(end_date)
                     completes += 1
-                else:
-                    osg_job['JobSimLastSubmitDate'] = datetime.now().timestamp()
-                    if osg_job['ResubmitCount'] == 0:
-                        terminates += 1
-                    osg_job['ResubmitCount'] += 1
-                    osg_job['JobSimStatus'] = 'pending'
             else:
                 break
+        tree_lock.release()
 
 
 def receive_job(ch, method, properties, body):
@@ -125,7 +115,8 @@ def receive_job(ch, method, properties, body):
             "Machine": None
         })
         osg_job['GlobalJobId'] = osg_job['GlobalJobId'].replace('.', '_')
-        waiting_queue.append(osg_job)
+        with queue_lock:
+            waiting_queue.append(osg_job)
 
 
 def terminate_job(ch, method, properties, body):
@@ -138,8 +129,10 @@ def terminate_job(ch, method, properties, body):
             osg_job['ResubmitCount'] += 1
             osg_job['JobSimStatus'] = 'pending'
             if osg_job['JobSimExpectCompleteDate'] in running_job_tree.keys():
-                running_job_tree.remove(key=osg_job['JobSimExpectCompleteDate'])
-                waiting_queue.append(osg_job)
+                with tree_lock:
+                    running_job_tree.remove(key=osg_job['JobSimExpectCompleteDate'])
+                with queue_lock:
+                    waiting_queue.append(osg_job)
 
 
 if __name__ == '__main__':
@@ -152,6 +145,8 @@ if __name__ == '__main__':
     db.drop_collection('osg_jobs')
     osg_job_collection = db['osg_jobs']
 
+    queue_lock = RLock()
+    tree_lock = RLock()
     waiting_queue = []
     running_job_tree = FastRBTree()
 

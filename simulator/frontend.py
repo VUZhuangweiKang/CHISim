@@ -41,9 +41,7 @@ def process_usr_requests(ch, method, properties, body):
         return
     global sim_start_time, active_leases_tree, warm_down
     usr_request = json.loads(body)
-    if not sim_start_time:
-        sim_start_time = datetime.now().timestamp()
-    
+    usr_request['sim_start_date'] = datetime.now().timestamp()
     time_diff = (get_timestamp(usr_request['start_on']) - get_timestamp(usr_request['created_at'])) / 60
     if time_diff < 0:
         return
@@ -77,20 +75,11 @@ def process_usr_requests(ch, method, properties, body):
             lease_end = min(get_timestamp(usr_request['end_on']), get_timestamp(usr_request['deleted_at']))
         else:
             lease_end = get_timestamp(usr_request['end_on'])
-        usr_request['sim_start_date'] = datetime.now().timestamp()
-        lease_end += randint(0, 1000000)/1000000
-        active_leases_tree[lease_end] = usr_request
+        lease_end += randint(0, 100*scale_ratio)/(100*scale_ratio)
+        with tree_lock:
+            active_leases_tree[lease_end] = usr_request
     else:
         logger.info('failed to deploy: %s' % usr_request['lease_id'])
-
-
-def measure_inuse_nodes():
-    total_node_cnt = 0
-    for key in active_leases_tree.keys():
-        node_cnt = active_leases_tree[key]['node_cnt']
-        total_node_cnt += node_cnt
-    json_body = [{'measurement': 'ch_inuse', 'fields': {'chi-inuse': total_node_cnt}}]
-    monitor.influx_client.write_points(json_body)
 
 
 def trace_active_lease():
@@ -99,20 +88,21 @@ def trace_active_lease():
     while True:
         if config['simulation']['enable_monitor']:
             monitor.monitor_chameleon(completed)
-            measure_inuse_nodes()
-        while not active_leases_tree.is_empty():
-            end_time, recent_end = active_leases_tree.min_item()
-            start_time = get_timestamp(recent_end['start_on'])
-            if (end_time-start_time) <= ((datetime.now().timestamp()-sim_start_time)*scale_ratio):
-                payload = {'node_type': recent_end['node_type'], 'node_cnt': recent_end['node_cnt']}
-                requests.post(url='%s/release_nodes' % rsrc_mgr_url, json=payload)
-                active_leases_tree.remove(end_time)
-                recent_end['sim_end_date'] = datetime.now().timestamp()
-                recent_end['sim_duration'] = recent_end['sim_end_date'] - recent_end['sim_start_date']
-                ch_lease_collection.insert_one(recent_end)
-                completed += 1
-            else:
-                break
+            # measure_inuse_nodes()
+        with tree_lock:
+            while not active_leases_tree.is_empty():
+                end_time, recent_end = active_leases_tree.min_item()
+                start_time = get_timestamp(recent_end['start_on'])
+                if (end_time-start_time) <= ((datetime.now().timestamp()-recent_end['sim_start_date'])*scale_ratio):
+                    payload = {'node_type': recent_end['node_type'], 'node_cnt': recent_end['node_cnt']}
+                    requests.post(url='%s/release_nodes' % rsrc_mgr_url, json=payload)
+                    active_leases_tree.remove(end_time)
+                    recent_end['sim_end_date'] = datetime.now().timestamp()
+                    recent_end['sim_duration'] = recent_end['sim_end_date'] - recent_end['sim_start_date']
+                    ch_lease_collection.insert_one(recent_end)
+                    completed += 1
+                else:
+                    break
 
 ########## Request Forecaster ###########
 
@@ -236,8 +226,8 @@ if __name__ == '__main__':
     scale_ratio = get_scale_ratio(config)
     rsrc_mgr_url =get_rsrc_mgr_url(config)
     
+    tree_lock = RLock()
     active_leases_tree = FastRBTree()
-    sim_start_time = None
 
     fs_len = frc_params['steps']
     sw_len = frc_params['window']

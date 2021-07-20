@@ -4,7 +4,7 @@ simulation:
   credential:
     username: chi-sim
     password: chi-sim
-  enable_osg: yes
+  enable_osg: no
   enable_ml: no
   enable_monitor: yes
 
