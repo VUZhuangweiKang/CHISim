@@ -1,20 +1,19 @@
 from influxdb import InfluxDBClient
 import pymongo
 import json
+from utils import *
 
 
 class Monitor:
     def __init__(self):
-        with open('influxdb.json') as f:
-            db_info = json.load(f)
-        self.influx_client = InfluxDBClient(**db_info, database='ChameleonSimulator')
+        config = load_config()
+        self.influx_client = InfluxDBClient(**get_influxdb_info(config), database='ChameleonSimulator')
 
-        mongo_client = pymongo.MongoClient('mongodb://chi-sim:chi-sim@127.0.0.1:27017')
+        mongo_client = pymongo.MongoClient(get_mongo_url(config))
         mongodb = mongo_client['ChameleonSimulator']
         self.resource_pool = mongodb['resource_pool']
         self.osg_jobs = mongodb['osg_jobs']
         self.ch_leases = mongodb['chameleon_leases']
-
 
     def measure_rsrc(self):
         # monitor resource pool

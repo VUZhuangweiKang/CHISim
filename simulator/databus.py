@@ -5,22 +5,20 @@ import json
 import pika
 from datetime import datetime
 from pika.exchange_type import ExchangeType
+from utils import *
 
 
 def init_connection():
-    assert os.path.exists('rabbitmq.json')
-    with open('rabbitmq.json') as f:
-        connect_info = json.load(f)
-
+    config = load_config()
+    connect_info = get_rabbitmq_info(config)
     params = (pika.ConnectionParameters(
         host=connect_info['host'],
         heartbeat=0,
-        credentials=pika.credentials.PlainCredentials(username=connect_info['username'], password=connect_info['password'], erase_on_connect=True))
+        credentials=pika.credentials.PlainCredentials(username=connect_info['username'], password=connect_info['password'], erase_on_connect=True),
+        connection_attempts=10, retry_delay=1)
     )
 
     connection = pika.BlockingConnection(parameters=params)
-    while not connection.is_open:
-        pass
     return connection
 
 
@@ -39,20 +37,19 @@ def emit_timeseries(exchange, routing_key, payload, index_col, scale_ratio):
     channel = connection.channel()
     channel.exchange_declare(exchange)
     last_send_at = None
-    df = pd.read_csv(payload)
-    # for df in pd.read_csv(payload, iterator=True, chunksize=1000):
-    index_col_name = df.columns[index_col]
-    for index, row in df.iterrows():
-        if last_send_at:
-            sleep_sec = (pd.to_datetime(row[index_col_name]) - pd.to_datetime(last_send_at)).total_seconds()/scale_ratio
-            time.sleep(sleep_sec)
-        channel.basic_publish(
-            exchange=exchange,
-            routing_key=routing_key,
-            body=row.to_json(),
-            properties=pika.BasicProperties(delivery_mode=1, headers={'key': routing_key})
-        )
-        last_send_at = row[index_col_name]
+    for df in pd.read_csv(payload, iterator=True, chunksize=1000):
+        index_col_name = df.columns[index_col]
+        for index, row in df.iterrows():
+            if last_send_at:
+                sleep_sec = (pd.to_datetime(row[index_col_name]) - pd.to_datetime(last_send_at)).total_seconds()/scale_ratio
+                time.sleep(sleep_sec)
+            channel.basic_publish(
+                exchange=exchange,
+                routing_key=routing_key,
+                body=row.to_json(),
+                properties=pika.BasicProperties(delivery_mode=1, headers={'key': routing_key})
+            )
+            last_send_at = row[index_col_name]
     print('Done')
     try:
         while True:
@@ -64,8 +61,6 @@ def emit_timeseries(exchange, routing_key, payload, index_col, scale_ratio):
 def consume(exchange, queue, binding_key, callback):
     connection = init_connection()
     channel = connection.channel()
-    while not channel.is_open:
-        pass
     channel.queue_bind(exchange=exchange, queue=queue, routing_key=binding_key)
     channel.basic_qos(prefetch_count=1)
     channel.basic_consume(queue=queue, on_message_callback=callback, auto_ack=True)

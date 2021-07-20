@@ -3,6 +3,7 @@ from tsmoothie.smoother import SpectralSmoother
 from sklearn.preprocessing import MinMaxScaler
 import logging
 from datetime import datetime
+import yaml
 
 get_timestamp = lambda time_str: datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S').timestamp()
 
@@ -48,8 +49,7 @@ def data_preprocess(df, slot):
 def get_logger(logger_name, log_file=None):
     logger = logging.getLogger(logger_name)
     logger.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('%(levelname) -10s %(asctime)s %(name) -30s %(funcName) '
-              '-35s %(lineno) -5d: %(message)s')
+    formatter = logging.Formatter('%(levelname) -10s %(asctime)s -10s %(funcName) -5s %(lineno) -5d: %(message)s')
 
     if log_file:
         fl = logging.FileHandler(log_file)
@@ -62,3 +62,33 @@ def get_logger(logger_name, log_file=None):
     cl.setFormatter(formatter)
     logger.addHandler(cl)
     return logger
+
+
+# parse parameters
+def load_config(config_file='config.yaml'):
+    with open(config_file, 'r') as stream:
+        try:
+            return yaml.safe_load(stream)
+        except yaml.YAMLError as er:
+            print(er)
+            raise
+
+def get_rsrc_mgr_url(config):
+    return 'http://%s:5000' % config['framework']['rsrc_mgr']['host']
+
+def get_mongo_url(config):
+    return 'mongodb://%s:%s@%s:27017' % (config['simulation']['credential']['username'], config['simulation']['credential']['password'], config['framework']['database']['mongodb'])
+
+def get_scale_ratio(config):
+    return config['simulation']['scale_ratio']
+
+def get_influxdb_info(config):
+    db_info = config['simulation']['credential']
+    db_info.update({'host': config['framework']['database']['influxdb']})
+    return db_info
+
+def get_rabbitmq_info(config):
+    dbs_info = config['simulation']['credential']
+    dbs_info.update({'host': config['framework']['databus']['rabbitmq']})
+    return dbs_info
+
