@@ -10,15 +10,15 @@ sudo systemctl enable mongod
 
 # mongo
 # use admin
-# db.createUser({
-#     user: "chi-sim",
-#     pwd: "chi-sim",
-#     roles: [
-#             { role: "userAdminAnyDatabase", db: "admin" },
-#             { role: "readWriteAnyDatabase", db: "admin" },
-#             { role: "dbAdminAnyDatabase",   db: "admin" }
-#             ]
-# });
-# sudo nano /etc/mongod.conf
-# security:
-#   authorization: enabled
+db.createUser({
+    user: "chi-sim",
+    pwd: "chi-sim",
+    roles: [
+            { role: "userAdminAnyDatabase", db: "admin" },
+            { role: "readWriteAnyDatabase", db: "admin" },
+            { role: "dbAdminAnyDatabase",   db: "admin" }
+            ]
+});
+sudo nano /etc/mongod.conf
+security:
+  authorization: enabled

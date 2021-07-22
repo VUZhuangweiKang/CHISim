@@ -18,6 +18,10 @@ class Monitor:
 
     def measure_rsrc(self):
         # monitor resource pool
+        agg_body = [
+            {"$match": ""},
+            {"$project": {"status": "$status", "pool": "$pool"}}
+        ]
         rp = self.resource_pool.find({},{'status': 1, 'pool': 1})
         rp = pd.DataFrame(list(rp))
         ch_inuse = rp[(rp['status']=='inuse') & (rp['pool']=='chameleon')].shape[0]

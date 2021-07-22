@@ -2,6 +2,7 @@ import logging
 from re import T
 from flask.helpers import make_response
 from pymongo import database
+import requests
 from utils import get_influxdb_info, get_logger, get_mongo_url, load_config
 import databus as dbs
 from flask import Flask, jsonify
@@ -60,7 +61,7 @@ def preempt_nodes(request_data):
         osg_jobs = []
         for _, row in osg_nodes.iterrows():
             osg_jobs.extend(row['backfill'])
-        dbs.emit_msg("osg_jobs_exchange", "terminate_osg_job", json.dumps({"backfills": osg_jobs}), rm_channel)
+        dbs.emit_msg("internal_exchange", "terminate_osg_job", json.dumps({"backfills": osg_jobs}), rm_channel)
         logger.info('osg --> chameleon: %d' % osg_nodes_cnt)
     return osg_nodes_cnt
 
@@ -104,18 +105,26 @@ def acquire_nodes():
 
 @app.route('/release_nodes', methods=['POST'])
 def release_nodes():
+    global completed_leases
     request_data = request.get_json()
-    inuse_nodes = _find({"$and": [
-        {"node_type": request_data['node_type']}, 
-        {"pool": "chameleon"},
-        {"status": "inuse"}]}).iloc[:int(request_data['node_cnt'])]
-    if inuse_nodes.shape[0] >= request_data['node_cnt']:
-        result = _update(filter={"HOST_NAME (PHYSICAL)": {"$in": inuse_nodes['HOST_NAME (PHYSICAL)'].to_list()}}, operations= {"$set": {"status": "free", "pool": 'chameleon'}}, one=False)
-        if result == request_data['node_cnt']:
+    agg_body = [
+        {"$match": {"$and": [ {"node_type": request_data['node_type']}, {"pool": "chameleon"}, {"status": "inuse"} ] }},
+        {"$project": {"HOST_NAME (PHYSICAL)": "$HOST_NAME (PHYSICAL)"}},
+        {"$limit": int(request_data['node_cnt'])}
+    ]
+    inuse_nodes = pd.DataFrame(list(resource_pool.aggregate(agg_body)))
+    # print(inuse_nodes.shape[0], request_data['node_cnt'])
+    if inuse_nodes.shape[0] == request_data['node_cnt']:
+        result = resource_pool.update_many({"HOST_NAME (PHYSICAL)": {"$in": inuse_nodes["HOST_NAME (PHYSICAL)"].to_list()}}, {"$set": {"status": "free", "pool": 'chameleon'}})
+        if config['simulation']['enable_monitor']:
+            monitor.measure_rsrc()
+            monitor.monitor_chameleon(completed_leases)
+        if result.modified_count == request_data['node_cnt']:
+            completed_leases += 1
             return 'OK', 200
     logger.error('chameleon: release_nodes %d > inuse_nodes %d' % (int(request_data['node_cnt']), inuse_nodes.shape[0]))
     return 'release node %d < inuse nodes %d' % (request_data['node_cnt'], inuse_nodes.shape[0]), 202
-        
+
 
 @app.route('/find', methods=['POST'])
 def find():
@@ -136,6 +145,17 @@ def update():
         return 'OK', 200
     else:
         return 'Null', 202
+
+@app.route('/aggregate', methods=['POST'])
+def aggregate():
+    query_steps = request.get_json()['steps']
+    result = resource_pool.aggregate(query_steps)
+    result = pd.DataFrame(list(result))
+    if result.shape[0] == 0:
+        return 'Null',  202
+    else:
+        del result['_id']
+        return make_response(jsonify(result.to_dict(orient="records")), 200)
 
 
 def process_machine_event(ch, method, properties, body):
@@ -169,7 +189,7 @@ def process_machine_event(ch, method, properties, body):
             backfills = machine['backfill']
             if len(backfills) > 0:
                 payload = {"backfills": backfills}
-                dbs.emit_msg("osg_jobs_exchange", "terminate_osg_job", json.dumps(payload), ch)
+                dbs.emit_msg("internal_exchange", "terminate_osg_job", json.dumps(payload), ch)
             machine_event.update({
                 "pool": "chameleon",
                 "status": "inactive",
@@ -188,6 +208,7 @@ if __name__ == '__main__':
     db = mongo_client['ChameleonSimulator']
     resource_pool = db['resource_pool']
 
+    completed_leases = 0
     with open('hardware.json') as f:
         hardware_profile = json.load(f)
     dbs_connection = dbs.init_connection()

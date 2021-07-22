@@ -1,3 +1,4 @@
+import time
 import databus as dbs
 from utils import *
 import threading
@@ -31,6 +32,7 @@ if __name__ == '__main__':
         oj_thread = threading.Thread(target=dbs.emit_timeseries, kwargs=oj_args, daemon=True)
     
     me_thread.start()
+    time.sleep(1)
     cr_thread.start()
     if oj_thread:
         oj_thread.start()

@@ -1,10 +1,10 @@
 ---
 simulation:
-  scale_ratio: 100000
+  scale_ratio: 10000
   credential:
     username: chi-sim
     password: chi-sim
-  enable_osg: no
+  enable_osg: yes
   enable_ml: no
   enable_monitor: yes
 
@@ -24,7 +24,7 @@ framework:
     rabbitmq: 127.0.0.1
   database:
     influxdb: 127.0.0.1
-    mongodb: 127.0.0.1
+    mongodb: 129.59.234.232
 
 workloads:
   machine_events:
@@ -34,5 +34,5 @@ workloads:
     payload: ../datasets/osg_jobs/osg_jobs.csv
     index_col: 13
   chameleon_requests:
-    payload: ../datasets/lease_info/compute_haswell.csv
-    index_col: 5
+    payload: datasets/user_requests/lease_info.csv
+    index_col: -1

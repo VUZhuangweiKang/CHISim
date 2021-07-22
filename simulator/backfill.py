@@ -1,3 +1,4 @@
+from logging import Logger
 from random import randint
 from bintrees import FastRBTree
 import databus as dbs
@@ -12,6 +13,7 @@ import pandas as pd
 from random import randint
 from monitor import Monitor
 from utils import *
+from collections import deque
 
 
 monitor = Monitor()
@@ -21,59 +23,61 @@ get_timestamp = lambda time_str: datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'
 def process_job():
     global waiting_queue, running_job_tree
     while True:
-        queue_lock.acquire()
         if len(waiting_queue) == 0:
-            queue_lock.release()
             continue
         osg_job = waiting_queue[0]
         osg_job['JobSimLastSubmitDate'] = datetime.now().timestamp()
-        flag = False
-        # find a node from osg pool
-        response = requests.post(url='%s/find' % rsrc_mgr_url, json={"pool": "osg"})
+        agg_body = {'steps': [
+            {"$match": {"pool": "osg"}},
+            {"$project": {
+                "HOST_NAME (PHYSICAL)": "$HOST_NAME (PHYSICAL)",
+                "free_cpus": {"$subtract": ["$cpus", "$inuse_cpus"]}, 
+                "free_memory": {"$subtract": ["$memory", "$inuse_memory"]}
+            }},
+            {"$match": { 
+                "$and": [
+                    {"free_cpus": {"$gte": osg_job['CpusProvisioned']}},
+                    {"free_memory": {"$gte": osg_job['MemoryProvisioned']}}
+                ]}
+            },
+            {"$limit": 1}
+        ]}
+        response = requests.post(url='%s/aggregate' % rsrc_mgr_url, json=agg_body)
         if response.status_code == 200:
-            osg_nodes = pd.DataFrame(response.json())
-            osg_nodes = osg_nodes[(osg_nodes['cpus'] - osg_nodes['inuse_cpus'] >= osg_job['CpusProvisioned']) & (osg_nodes['memory'] - osg_nodes['inuse_memory'] >= osg_job['MemoryProvisioned'])]
-            if osg_nodes.shape[0] > 0:
-                ff_node = osg_nodes.iloc[0]
-                # update osg resource pool
-                osg_job['Machine'] = ff_node['HOST_NAME (PHYSICAL)'] 
-                osg_job['JobSimStatus'] = 'running'
-                osg_job['JobSimLastStartDate'] = datetime.now().timestamp()
-                osg_job['JobSimExpectCompleteDate'] = osg_job['JobSimLastStartDate'] + osg_job['JobDuration']
-                update_req = {
-                    "filter": {"HOST_NAME (PHYSICAL)": osg_job['Machine']},
-                    "operations": {
-                        "$inc": {
-                            "inuse_cpus": int(osg_job['CpusProvisioned']), 
-                            "inuse_memory": int(osg_job['MemoryProvisioned'])
-                        },
-                        "$push": {"backfill": osg_job}
+            osg_job['Machine'] = response.json()[0]['HOST_NAME (PHYSICAL)']
+            osg_job['JobSimStatus'] = 'running'
+            osg_job['JobSimLastStartDate'] = datetime.now().timestamp()
+            osg_job['JobSimExpectCompleteDate'] = osg_job['JobSimLastStartDate'] + osg_job['JobDuration']
+            update_req = {
+                "filter": {"HOST_NAME (PHYSICAL)": osg_job['Machine']},
+                "operations": {
+                    "$inc": {
+                        "inuse_cpus": int(osg_job['CpusProvisioned']), 
+                        "inuse_memory": int(osg_job['MemoryProvisioned'])
                     },
-                    "one": True
-                }
-                response = requests.post(url='%s/update' % rsrc_mgr_url, json=update_req)
-                if response.status_code == 200:
-                    # moving job from waiting queue to running queue
-                    waiting_queue.pop(0)
-                    temp = osg_job['JobSimExpectCompleteDate'] + randint(0, 1000000)/1000000
-                    with tree_lock:
-                        running_job_tree[temp] = osg_job
-                    flag = True
-        queue_lock.release()
+                    "$push": {"backfill": osg_job}
+                },
+                "one": True
+            }
+            response = requests.post(url='%s/update' % rsrc_mgr_url, json=update_req)
+            if response.status_code == 200:
+                # moving job from waiting queue to running queue
+                waiting_queue.popleft()
+                temp = osg_job['JobSimExpectCompleteDate'] + randint(0, 1000000)/1000000
+                running_job_tree[temp] = osg_job
+                continue
         
-        if not flag:
-            # acquire node from chameleon pool
-            payload = {"node_type": "compute_haswell", "node_cnt": 1, "pool": "osg"}
-            requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload)
+        # acquire node from chameleon pool
+        payload = {"node_type": "compute_haswell", "node_cnt": 1, "pool": "osg"}
+        requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload)
 
 
 def trace_active_job():
-    terminates = 0
+    global terminate_job_count
     completes = 0
     while True:
         if config['simulation']['enable_monitor']:
-            monitor.monitor_osg_jobs(running_job_tree.count, len(waiting_queue), completes, terminates)
-        tree_lock.acquire()
+            monitor.monitor_osg_jobs(running_job_tree.count, len(waiting_queue), completes, terminate_job_count)
         while not running_job_tree.is_empty():
             end_date, osg_job = running_job_tree.min_item()
             if osg_job['JobDuration'] <= scale_ratio*(datetime.now().timestamp() - osg_job['JobSimLastStartDate']):
@@ -89,18 +93,35 @@ def trace_active_job():
                     "one": True
                 }
                 response = requests.post(url='%s/update' % rsrc_mgr_url, json=update_req)
-                if response.status_code == 200:
-                    osg_job['JobSimStatus'] = 'completed'
-                    osg_job['JobSimCompleteDate'] = osg_job['JobSimLastStartDate'] + osg_job['JobDuration']
-                    osg_job_collection.insert_one(osg_job)
-                    running_job_tree.remove(end_date)
-                    completes += 1
+                print(completes, osg_job['GlobalJobId'], response.status_code)
+                # assert response.status_code == 200
+                osg_job['JobSimStatus'] = 'completed'
+                osg_job['JobSimCompleteDate'] = osg_job['JobSimLastStartDate'] + osg_job['JobDuration']
+                osg_job_collection.insert_one(osg_job)
+                running_job_tree.remove(end_date)
+                completes += 1
             else:
                 break
-        tree_lock.release()
+        
+        if completes > 0 and len(waiting_queue) == 0 and running_job_tree.is_empty():
+            print('break trace active job loop')
+            break
+
+    update_req = {
+        "filter": {"pool": "osg"},
+        "operations": {
+            "$set": {
+                "pool": "chameleon",
+                "inuse_cpus": 0,
+                "inuse_memory": 0,
+                "backfill": []
+            }
+        }
+    }
+    requests.post(url='%s/update' % rsrc_mgr_url, json=update_req)
 
 
-def receive_job(ch, method, properties, body):
+def receive_job(method, properties, body):
     global waiting_queue
     if properties.headers['key'] == 'osg_job':
         osg_job = json.loads(body)
@@ -115,12 +136,11 @@ def receive_job(ch, method, properties, body):
             "Machine": None
         })
         osg_job['GlobalJobId'] = osg_job['GlobalJobId'].replace('.', '_')
-        with queue_lock:
-            waiting_queue.append(osg_job)
+        waiting_queue.append(osg_job)
 
 
 def terminate_job(ch, method, properties, body):
-    global running_job_tree, waiting_queue
+    global running_job_tree, waiting_queue, terminate_job_count
     if properties.headers['key'] == 'terminate_osg_job':
         backfills = json.loads(body)['backfills']
         for i in range(len(backfills)):
@@ -129,10 +149,9 @@ def terminate_job(ch, method, properties, body):
             osg_job['ResubmitCount'] += 1
             osg_job['JobSimStatus'] = 'pending'
             if osg_job['JobSimExpectCompleteDate'] in running_job_tree.keys():
-                with tree_lock:
-                    running_job_tree.remove(key=osg_job['JobSimExpectCompleteDate'])
-                with queue_lock:
-                    waiting_queue.append(osg_job)
+                running_job_tree.remove(key=osg_job['JobSimExpectCompleteDate'])
+                waiting_queue.append(osg_job)
+                terminate_job_count += 1
 
 
 if __name__ == '__main__':
@@ -145,13 +164,14 @@ if __name__ == '__main__':
     db.drop_collection('osg_jobs')
     osg_job_collection = db['osg_jobs']
 
+    terminate_job_count = 0
     queue_lock = RLock()
     tree_lock = RLock()
-    waiting_queue = []
+    waiting_queue = deque([])
     running_job_tree = FastRBTree()
 
-    thread1 = threading.Thread(name='listen_osg_jobs', target=dbs.consume, args=('osg_jobs_exchange', 'osg_jobs_queue', 'osg_job', receive_job), daemon=True)
-    thread2 = threading.Thread(name='terminate_osg_jobs', target=dbs.consume, args=('osg_jobs_exchange', 'osg_jobs_queue', 'terminate_osg_job', terminate_job), daemon=True)
+    thread1 = threading.Thread(name='listen_osg_jobs', target=dbs.consume, args=('osg_jobs_exchange', 'osg_jobs_queue', 'osg_job', receive_job, 'pull'), daemon=True)
+    thread2 = threading.Thread(name='terminate_osg_jobs', target=dbs.consume, args=('internal_exchange', 'internal_queue', 'terminate_osg_job', terminate_job), daemon=True)
     thread3 = threading.Thread(name='trace_active_jobs', target=trace_active_job, daemon=True)
     thread1.start()
     thread2.start()

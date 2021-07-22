@@ -2,6 +2,7 @@ import time
 import databus as dbs
 import influxdb
 import pymongo
+from pika.exchange_type import ExchangeType
 from utils import *
 
 
@@ -23,7 +24,7 @@ if __name__ == '__main__':
 
         exchanges = ['internal_exchange', 'user_requests_exchange', 'osg_jobs_exchange', 'machine_events_exchange']
         for ex in exchanges:
-            gm_channel.exchange_declare(ex)
+            gm_channel.exchange_declare(ex, exchange_type=ExchangeType.topic)
         
         queues = ['internal_queue', 'user_requests_queue', 'osg_jobs_queue', 'machine_events_queue']
         for q in queues:

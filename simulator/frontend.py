@@ -36,73 +36,43 @@ warm_down = False
 monitor = Monitor()
 
 
-def process_usr_requests(ch, method, properties, body):
+def process_usr_requests(method, properties, body):
     if properties.headers['key'] != 'raw_request':
         return
-    global sim_start_time, active_leases_tree, warm_down
+    global warm_down
     usr_request = json.loads(body)
-    usr_request['sim_start_date'] = datetime.now().timestamp()
-    time_diff = (get_timestamp(usr_request['start_on']) - get_timestamp(usr_request['created_at'])) / 60
-    if time_diff < 0:
-        return
-    rc = 200
-    if time_diff > 2:
-        json_body = [{'measurement': 'in_advance', 'fields': usr_request, 'time': usr_request['created_at']}]
-        payload = {'node_type': usr_request['node_type'], 'node_cnt': usr_request['node_cnt'], 'pool': 'chameleon'}
-        rc = requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload).status_code
-    else:
-        json_body = [{'measurement': 'on_demand', 'fields': usr_request, 'time': usr_request['start_on']}]
-        
-        slide_window.append(usr_request)
-        if len(prediction_window) > 0:
-            if not warm_down:
-                logger.info('Frontend has been warmed up')
-            warm_down = True
-            remaining = prediction_window[0]['node_cnt'] - usr_request['node_cnt']
-            if remaining < 0: # since we have reserved node when performing prediction
-                payload = {'node_type': usr_request['node_type'], 'node_cnt': usr_request['node_cnt'], 'pool': 'chameleon'}
-                rc = requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload).status_code
-            prediction_window[0]['node_cnt'] = remaining
-        else:
+    if usr_request['action'] == 'start':
+        time_diff = (get_timestamp(usr_request['start_on']) - get_timestamp(usr_request['created_at'])) / 60
+        rc = 200
+        if time_diff > 2:
+            json_body = [{'measurement': 'in_advance', 'fields': usr_request, 'time': usr_request['created_at']}]
             payload = {'node_type': usr_request['node_type'], 'node_cnt': usr_request['node_cnt'], 'pool': 'chameleon'}
             rc = requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload).status_code
-        if config['simulation']['enable_ml']:
-            make_prediction()
-    influx_client.write_points(json_body)
-
-    if rc == 200:
-        if usr_request['deleted_at']:
-            lease_end = min(get_timestamp(usr_request['end_on']), get_timestamp(usr_request['deleted_at']))
         else:
-            lease_end = get_timestamp(usr_request['end_on'])
-        lease_end += randint(0, 100*scale_ratio)/(100*scale_ratio)
-        with tree_lock:
-            active_leases_tree[lease_end] = usr_request
-    else:
-        logger.info('failed to deploy: %s' % usr_request['lease_id'])
+            json_body = [{'measurement': 'on_demand', 'fields': usr_request, 'time': usr_request['start_on']}]
+            
+            slide_window.append(usr_request)
+            if len(prediction_window) > 0:
+                if not warm_down:
+                    logger.info('Frontend has been warmed up')
+                warm_down = True
+                remaining = prediction_window[0]['node_cnt'] - usr_request['node_cnt']
+                if remaining < 0: # since we have reserved node when performing prediction
+                    payload = {'node_type': usr_request['node_type'], 'node_cnt': usr_request['node_cnt'], 'pool': 'chameleon'}
+                    rc = requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload).status_code
+                prediction_window[0]['node_cnt'] = remaining
+            else:
+                payload = {'node_type': usr_request['node_type'], 'node_cnt': usr_request['node_cnt'], 'pool': 'chameleon'}
+                rc = requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload).status_code
+            if config['simulation']['enable_ml']:
+                make_prediction()
+        influx_client.write_points(json_body)
 
-
-def trace_active_lease():
-    global active_leases_tree, sim_start_time
-    completed = 0
-    while True:
-        if config['simulation']['enable_monitor']:
-            monitor.monitor_chameleon(completed)
-            # measure_inuse_nodes()
-        with tree_lock:
-            while not active_leases_tree.is_empty():
-                end_time, recent_end = active_leases_tree.min_item()
-                start_time = get_timestamp(recent_end['start_on'])
-                if (end_time-start_time) <= ((datetime.now().timestamp()-recent_end['sim_start_date'])*scale_ratio):
-                    payload = {'node_type': recent_end['node_type'], 'node_cnt': recent_end['node_cnt']}
-                    requests.post(url='%s/release_nodes' % rsrc_mgr_url, json=payload)
-                    active_leases_tree.remove(end_time)
-                    recent_end['sim_end_date'] = datetime.now().timestamp()
-                    recent_end['sim_duration'] = recent_end['sim_end_date'] - recent_end['sim_start_date']
-                    ch_lease_collection.insert_one(recent_end)
-                    completed += 1
-                else:
-                    break
+        if rc != 200:
+            logger.info('failed to deploy: %s' % usr_request['lease_id'])
+    elif usr_request['action'] == 'stop':
+        payload = {'node_type': usr_request['node_type'], 'node_cnt': usr_request['node_cnt']}
+        requests.post(url='%s/release_nodes' % rsrc_mgr_url, json=payload)
 
 ########## Request Forecaster ###########
 
@@ -226,8 +196,7 @@ if __name__ == '__main__':
     scale_ratio = get_scale_ratio(config)
     rsrc_mgr_url =get_rsrc_mgr_url(config)
     
-    tree_lock = RLock()
-    active_leases_tree = FastRBTree()
+    lock = RLock()
 
     fs_len = frc_params['steps']
     sw_len = frc_params['window']
@@ -241,10 +210,8 @@ if __name__ == '__main__':
     mongodb = mongo_client['ChameleonSimulator']
     ch_lease_collection = mongodb['chameleon_leases']
 
-    thread1 = threading.Thread(name='listen_user_requests', target=dbs.consume, args=('user_requests_exchange', 'user_requests_queue', 'raw_request', process_usr_requests), daemon=True)
-    thread2 = threading.Thread(name='trace active lease', target=trace_active_lease, args=(), daemon=True)
+    thread1 = threading.Thread(name='listen_user_requests', target=dbs.consume, args=('user_requests_exchange', 'user_requests_queue', 'raw_request', process_usr_requests, 'pull'), daemon=True)
     thread1.start()
-    thread2.start()
     
     while True:
         if frc_params['retrain']['enabled'] and config['simulation']['enable_ml']:
