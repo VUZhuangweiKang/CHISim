@@ -30,31 +30,31 @@ def emit_msg(exchange, routing_key, payload, channel):
         exchange=exchange,
         routing_key=routing_key,
         body=payload,
-        properties=pika.BasicProperties(headers={'key': routing_key}),
+        properties=pika.BasicProperties(delivery_mode=2, headers={'key': routing_key}),
         mandatory=True
     )
 
 
-def emit_timeseries(exchange, routing_key, payload, index_col, scale_ratio):
+def emit_timeseries(exchange, routing_key, payload, timestamp_col, scale_ratio):
     connection = init_connection()
     channel = connection.channel()
     channel.confirm_delivery()
     channel.exchange_declare(exchange, exchange_type=ExchangeType.topic)
     last_send_at = None
     for df in pd.read_csv(payload, iterator=True, chunksize=1000):
-        index_col_name = df.columns[index_col]
+        timestamp_col_name = df.columns[timestamp_col]
         for index, row in df.iterrows():
             if last_send_at:
-                sleep_sec = (pd.to_datetime(row[index_col_name]) - pd.to_datetime(last_send_at)).total_seconds()/scale_ratio
+                sleep_sec = (pd.to_datetime(row[timestamp_col_name]) - pd.to_datetime(last_send_at)).total_seconds()/scale_ratio
                 time.sleep(sleep_sec)
             channel.basic_publish(
                 exchange=exchange,
                 routing_key=routing_key,
                 body=row.to_json(),
-                properties=pika.BasicProperties(delivery_mode=1, headers={'key': routing_key}),
+                properties=pika.BasicProperties(delivery_mode=2, headers={'key': routing_key}),
                 mandatory=True
             )
-            last_send_at = row[index_col_name]
+            last_send_at = row[timestamp_col_name]
     print('%s done' % payload)
     try:
         while True:
@@ -74,8 +74,8 @@ def consume(exchange, queue, binding_key, callback, consume_type='push'):
         elif consume_type == 'pull':
             for method, header, body in channel.consume(queue):
                 if method:
-                    channel.basic_ack(method.delivery_tag)
                     callback(method, header, body)
+                    channel.basic_ack(method.delivery_tag)
     except KeyboardInterrupt as ex:
         if consume_type == 'push':
             channel.stop_consuming()

@@ -1,3 +1,4 @@
+from datetime import datetime
 import logging
 from re import T
 from flask.helpers import make_response
@@ -16,6 +17,7 @@ import pandas as pd
 import time
 from flask import request
 from monitor import Monitor
+import OsgOverhead
 
 
 app = Flask(__name__)
@@ -26,13 +28,6 @@ log.disabled = True
 logger = get_logger(__name__)
 monitor = Monitor()
 
-
-def _find(query, one=False):
-    if one:
-        return resource_pool.find_one(query)
-    else:
-        return pd.DataFrame(list(resource_pool.find(query)))
-
 def _update(filter, operations, one=True):
     if one:
         result = resource_pool.update_one(filter, operations)
@@ -40,67 +35,79 @@ def _update(filter, operations, one=True):
         result = resource_pool.update_many(filter, operations)
     return result.modified_count
 
-def _insert(data, one=True):
-    if one:
-        resource_pool.insert_one(data)
-    else:
-        resource_pool.insert_many(data)
-
 
 def preempt_nodes(request_data):
-    osg_nodes = _find({"$and": [{"node_type": request_data['node_type']}, {"pool": "osg"}]})
+    osg_nodes = resource_pool.aggregate([
+        {"$match": {"node_type": request_data['node_type'], "pool": "osg"}},
+        {"$limit": int(request_data['node_cnt'])}
+    ])
+    osg_nodes = pd.DataFrame(list(osg_nodes))
     osg_nodes_cnt = 0
     if osg_nodes.shape[0] > 0:
-        osg_nodes.sort_values(by=['inuse_cpus'], inplace=True)
-        osg_nodes = osg_nodes.iloc[:int(request_data['node_cnt'])]
-        osg_nodes_cnt = _update(
-            {"HOST_NAME (PHYSICAL)": {"$in": osg_nodes['HOST_NAME (PHYSICAL)'].to_list()}}, 
-            {"$set": {"status": "inuse", "pool": "chameleon", "inuse_cpus": 0, "inuse_memory": 0, "backfill": []}},
-            one=False)
-        
+        osg_nodes.sort_values(by=['inuse_cpus'], inplace=True)        
         osg_jobs = []
         for _, row in osg_nodes.iterrows():
             osg_jobs.extend(row['backfill'])
         dbs.emit_msg("internal_exchange", "terminate_osg_job", json.dumps({"backfills": osg_jobs}), rm_channel)
+        time.sleep(OsgOverhead.CLEAN_JOBS()/scale_ratio)
+        osg_nodes_cnt = resource_pool.update_many(
+            filter={"HOST_NAME (PHYSICAL)": {"$in": osg_nodes['HOST_NAME (PHYSICAL)'].to_list()}},
+            update={"$set": {"status": "inuse", "pool": "chameleon", "inuse_cpus": 0, "inuse_memory": 0, "backfill": [], "ready_for_osg": 0}}
+        ).modified_count
         logger.info('osg --> chameleon: %d' % osg_nodes_cnt)
     return osg_nodes_cnt
 
 
 @app.route('/acquire_nodes', methods=['POST'])
 def acquire_nodes():
+    if config['simulation']['enable_monitor']:
+        monitor.measure_rsrc()
     request_data = request.get_json()
     if request_data['pool'] == 'chameleon': 
         ch_nodes_cnt = 0
         osg_nodes_cnt = 0
-        ch_nodes = _find({"$and": [{"node_type": request_data['node_type']}, {"status": "free"}, {"pool": "chameleon"}]}).iloc[:int(request_data['node_cnt'])]
+        ch_nodes = resource_pool.aggregate([
+            {"$match": {"node_type": request_data['node_type'], "status": "free", "pool": "chameleon"}},
+            {"$project": {"HOST_NAME (PHYSICAL)": 1}},
+            {"$limit": int(request_data['node_cnt'])}
+        ])
+        ch_nodes = pd.DataFrame(list(ch_nodes))
         if ch_nodes.shape[0] > 0:
-            ch_nodes_cnt = _update(filter={"HOST_NAME (PHYSICAL)": {"$in": ch_nodes['HOST_NAME (PHYSICAL)'].to_list()}}, operations={"$set": {"status": "inuse"}}, one=False)
+            ch_nodes_cnt = resource_pool.update_many(
+                filter={"HOST_NAME (PHYSICAL)": {"$in": ch_nodes['HOST_NAME (PHYSICAL)'].to_list()}},
+                update={"$set": {"status": "inuse"}}
+            ).modified_count
+
         if ch_nodes_cnt < request_data['node_cnt']:
             temp = request_data.copy()
             temp['node_cnt'] -= ch_nodes_cnt
             osg_nodes_cnt = preempt_nodes(temp)
 
         if ch_nodes_cnt + osg_nodes_cnt < request_data['node_cnt']:
-            inuse_nodes = _find({"$and": [
-                {"node_type": request_data['node_type']}, 
-                {"pool": "chameleon"},
-                {"status": "inuse"}]}).iloc[:ch_nodes_cnt + osg_nodes_cnt]
+            inuse_nodes = resource_pool.aggregate([
+                {"$match": {"node_type": request_data['node_type'], "pool": "chameleon", "status": "inuse"}},
+                {"$project": {"HOST_NAME (PHYSICAL)": 1}},
+                {"$limit": ch_nodes_cnt + osg_nodes_cnt}
+            ])
+            inuse_nodes = pd.DataFrame(list(inuse_nodes))
             if inuse_nodes.shape[0] > 0:
-                _update(filter={"HOST_NAME (PHYSICAL)": {"$in": inuse_nodes['HOST_NAME (PHYSICAL)'].to_list()}}, 
-                            operations= {"$set": {"status": "free", "pool": 'chameleon'}}, one=False)
+                resource_pool.update_many(
+                    filter={"$and": [{"HOST_NAME (PHYSICAL)": {"$in": inuse_nodes['HOST_NAME (PHYSICAL)'].to_list()}}, {"status": "inuse"}, {"pool": "chameleon"}]},
+                    update={"$set": {"status": "free", "pool": 'chameleon'}}
+                )
             logger.info('chameleon: available_nodes %d < acquire_nodes %d' % (ch_nodes_cnt + osg_nodes_cnt, request_data['node_cnt']))
             return 'Fail', 202
+        return make_response(jsonify({"chameleon_pool": ch_nodes_cnt, "osg_pool": osg_nodes_cnt}), 200)
     elif request_data['pool'] == 'osg':
-        result = _update(filter={"$and": [{"status": "free"}, {"pool": "chameleon"}]}, operations={"$set": {"status": "inuse", "pool": "osg"}})
+        result = resource_pool.update_one(
+            filter={"$and": [{"status": "free"}, {"pool": "chameleon"}]},
+            update={"$set": {"status": "inuse", "pool": "osg", "ready_for_osg": datetime.now().timestamp() + OsgOverhead.TOTAL()/scale_ratio}}
+        ).modified_count
         if result == 0:
             return 'no node is available for osg', 202
         else:
             logger.info('chameleon --> osg: %d' % result)
-    
-    if config['simulation']['enable_monitor']:
-        monitor.measure_rsrc()
-
-    return 'OK', 200
+        return 'OK', 200
 
 
 @app.route('/release_nodes', methods=['POST'])
@@ -108,8 +115,8 @@ def release_nodes():
     global completed_leases
     request_data = request.get_json()
     agg_body = [
-        {"$match": {"$and": [ {"node_type": request_data['node_type']}, {"pool": "chameleon"}, {"status": "inuse"} ] }},
-        {"$project": {"HOST_NAME (PHYSICAL)": "$HOST_NAME (PHYSICAL)"}},
+        {"$match": { "node_type": request_data['node_type'], "pool": "chameleon", "status": "inuse" }},
+        {"$project": {"HOST_NAME (PHYSICAL)": 1}},
         {"$limit": int(request_data['node_cnt'])}
     ]
     inuse_nodes = pd.DataFrame(list(resource_pool.aggregate(agg_body)))
@@ -124,17 +131,6 @@ def release_nodes():
             return 'OK', 200
     logger.error('chameleon: release_nodes %d > inuse_nodes %d' % (int(request_data['node_cnt']), inuse_nodes.shape[0]))
     return 'release node %d < inuse nodes %d' % (request_data['node_cnt'], inuse_nodes.shape[0]), 202
-
-
-@app.route('/find', methods=['POST'])
-def find():
-    results = _find(request.get_json())
-    if '_id' in results.columns:
-        del results['_id']
-    if results.shape[0] > 0:
-        return make_response(jsonify(results.to_dict(orient="records")), 200)
-    else:
-        return 'Null', 202
 
 
 @app.route('/update', methods=['POST'])
@@ -163,7 +159,7 @@ def process_machine_event(ch, method, properties, body):
         return
     machine_event = json.loads(body)
     machine_id = machine_event['HOST_NAME (PHYSICAL)']
-    machine = _find({"HOST_NAME (PHYSICAL)": machine_id}, one=True)
+    machine = resource_pool.find_one({"HOST_NAME (PHYSICAL)": machine_id})
     if machine_event['EVENT'] in ['ENABLE', 'UPDATE']:
         if not machine:
             # parse node type
@@ -181,9 +177,10 @@ def process_machine_event(ch, method, properties, body):
                 "inuse_cpus": 0,
                 "memory": hardware_profile[machine_event['node_type']]['RAM'],
                 "inuse_memory": 0,
-                "backfill": []
+                "backfill": [],
+                "ready_for_osg": 0
             })
-            _insert(machine_event)
+            resource_pool.insert_one(machine_event)
     elif machine_event['EVENT'] == 'DISABLE':
         if machine:
             backfills = machine['backfill']
@@ -195,9 +192,13 @@ def process_machine_event(ch, method, properties, body):
                 "status": "inactive",
                 "inuse_cpus": 0,
                 "inuse_memory": 0,
-                "backfill": []
+                "backfill": [],
+                "ready_for_osg": 0
             })
-            _update(filter={"HOST_NAME (PHYSICAL)": machine_id}, operations={"$set": machine_event})
+            resource_pool.update_one(
+                filter={"HOST_NAME (PHYSICAL)": machine_id},
+                update={"$set": machine_event}
+            )
 
 
 if __name__ == '__main__':
@@ -207,12 +208,15 @@ if __name__ == '__main__':
     mongo_client = pymongo.MongoClient(get_mongo_url(config))
     db = mongo_client['ChameleonSimulator']
     resource_pool = db['resource_pool']
+    resource_pool.create_index('HOST_NAME (PHYSICAL)')
 
+    scale_ratio = config['simulation']['scale_ratio']
     completed_leases = 0
     with open('hardware.json') as f:
         hardware_profile = json.load(f)
     dbs_connection = dbs.init_connection()
     rm_channel = dbs_connection.channel()
+    rm_channel.confirm_delivery()
 
     # listen machine events
     thread1 = threading.Thread(name='listen_machine_events', target=dbs.consume, args=('machine_events_exchange', 'machine_events_queue', 'machine_event', process_machine_event), daemon=True)

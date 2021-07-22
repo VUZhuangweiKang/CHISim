@@ -39,7 +39,7 @@ monitor = Monitor()
 def process_usr_requests(method, properties, body):
     if properties.headers['key'] != 'raw_request':
         return
-    global warm_down
+    global warm_down, imm_term
     usr_request = json.loads(body)
     if usr_request['action'] == 'start':
         time_diff = (get_timestamp(usr_request['start_on']) - get_timestamp(usr_request['created_at'])) / 60
@@ -56,18 +56,20 @@ def process_usr_requests(method, properties, body):
                 if not warm_down:
                     logger.info('Frontend has been warmed up')
                 warm_down = True
-                remaining = prediction_window[0]['node_cnt'] - usr_request['node_cnt']
-                if remaining < 0: # since we have reserved node when performing prediction
+                remaining = prediction_window[0]['node_cnt'] - usr_request['node_cnt'] # since we have reserved node when performing prediction
+                if remaining < 0: 
                     payload = {'node_type': usr_request['node_type'], 'node_cnt': usr_request['node_cnt'], 'pool': 'chameleon'}
-                    rc = requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload).status_code
+                    response = requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload)
+                    imm_term += response.json()['osg_pool']
+                    rc = response.status_code
                 prediction_window[0]['node_cnt'] = remaining
             else:
                 payload = {'node_type': usr_request['node_type'], 'node_cnt': usr_request['node_cnt'], 'pool': 'chameleon'}
                 rc = requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload).status_code
+                print(rc)
             if config['simulation']['enable_ml']:
                 make_prediction()
         influx_client.write_points(json_body)
-
         if rc != 200:
             logger.info('failed to deploy: %s' % usr_request['lease_id'])
     elif usr_request['action'] == 'stop':
@@ -77,22 +79,37 @@ def process_usr_requests(method, properties, body):
 ########## Request Forecaster ###########
 
 def make_prediction():
-    global slide_window
+    global slide_window, imm_term, succ_term, unuse_term
     df = pd.DataFrame(slide_window)
     rsw = resample_sum(df, fs_len).iloc[:-1]
     rsw.dropna(inplace=True)
     rsw.set_index(['start_on'], inplace=True)
     rsw = rsw.astype(float)
+
     # when the sampled slide window is full, make prediction
+    osg_pool_nodes = 0  # node from osg pool in this prediction window
+    ch_pool_nodes = 0  # node from chameleon pool in this prediction window
     if rsw.shape[0] >= int(sw_len/fs_len):
         # some nodes are left in the previous prediction window
         if len(prediction_window) > 0 and prediction_window[0]['node_cnt'] > 0:
             payload = {'node_type': prediction_window[0]['node_type'], 'node_cnt': prediction_window[0]['node_cnt'], 'pool': 'chameleon'}
             requests.post(url='%s/release_nodes' % rsrc_mgr_url, json=payload)
+            if osg_pool_nodes > prediction_window[0]['node_cnt']:
+                unuse_term += prediction_window[0]['node_cnt']
+                succ_term += osg_pool_nodes - prediction_window[0]['node_cnt']
+            else:
+                unuse_term += osg_pool_nodes
+                succ_term += 0
+        elif len(prediction_window) > 0 and prediction_window[0]['node_cnt'] <= 0:
+            unuse_term += 0
+            succ_term += osg_pool_nodes
         
         if len(prediction_window) > 0:
             logger.info('pred_error: %d' % prediction_window[0]['node_cnt'])
             prediction_window.pop(0)
+
+        if config['simulation']['enable_monitor']:
+            monitor.monitor_terminates(unuse_term, succ_term, imm_term)
 
         # data smoothing and normalization
         smoother = spectral_smoother(rsw)
@@ -112,6 +129,11 @@ def make_prediction():
                 # predicted node_cnt can't be deployed, give up prediction at this step, add 0 as placeholder
                 payload = {'node_type': "compute_haswell", 'node_cnt': 0, 'pool': 'chameleon'}
                 requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload)
+            else:
+                allocation = response.json()
+                ch_pool_nodes = allocation['chameleon_pool']
+                osg_pool_nodes = allocation['osg_pool']
+
             prediction_window.append(payload)
 
         # move sliding window --> fs_len
@@ -209,6 +231,11 @@ if __name__ == '__main__':
     mongo_client = pymongo.MongoClient(get_mongo_url(config))
     mongodb = mongo_client['ChameleonSimulator']
     ch_lease_collection = mongodb['chameleon_leases']
+
+    # metrics
+    imm_term = 0
+    succ_term = 0
+    unuse_term = 0
 
     thread1 = threading.Thread(name='listen_user_requests', target=dbs.consume, args=('user_requests_exchange', 'user_requests_queue', 'raw_request', process_usr_requests, 'pull'), daemon=True)
     thread1.start()

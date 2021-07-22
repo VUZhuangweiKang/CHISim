@@ -18,11 +18,8 @@ class Monitor:
 
     def measure_rsrc(self):
         # monitor resource pool
-        agg_body = [
-            {"$match": ""},
-            {"$project": {"status": "$status", "pool": "$pool"}}
-        ]
-        rp = self.resource_pool.find({},{'status': 1, 'pool': 1})
+        agg_body = [ {"$project": {"status": 1, "pool": 1}} ]
+        rp = self.resource_pool.aggregate(agg_body)
         rp = pd.DataFrame(list(rp))
         ch_inuse = rp[(rp['status']=='inuse') & (rp['pool']=='chameleon')].shape[0]
         ch_free = rp[(rp['status']=='free') & (rp['pool']=='chameleon')].shape[0]
@@ -46,3 +43,6 @@ class Monitor:
 
     def monitor_chameleon(self, completed):
         self.influx_client.write_points([{'measurement': "chameleon_leases", 'fields': {'completed': completed}}])
+    
+    def monitor_terminates(self, unuse_term, succ_term, imm_term):
+        self.influx_client.write_points([{'measurement': "osg_jobs", 'fields': {'unused_termination': unuse_term, 'inadvance_term': succ_term, 'immediate_term': imm_term}}])
