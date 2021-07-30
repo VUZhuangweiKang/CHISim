@@ -15,5 +15,8 @@ def CREATE_CONTAINER():
 def CLEAN_JOBS():
     return randint(0, 1*60)
 
+def AHEAD_NOTIFY():
+    return 120
+
 def TOTAL():
     return START_NODE() + SETUP_NODE() + CREATE_CONTAINER()

@@ -1,10 +1,10 @@
 ---
 simulation:
-  scale_ratio: 3600
+  scale_ratio: 10800
   credential:
     username: chi-sim
     password: chi-sim
-  enable_osg: yes
+  enable_osg: no
   enable_ml: no
   enable_monitor: yes
 
@@ -12,7 +12,7 @@ framework:
   global_mgr:
     clean_run: yes
   rsrc_mgr:
-    host: 127.0.0.1
+    host: localhost
   frontend:
     request_forecaster:
       window: 168
@@ -31,7 +31,7 @@ workloads:
     payload: ../datasets/machine_events/compute_haswell.csv
     timestamp_col: 0
   osg_jobs:
-    payload: ../datasets/osg_jobs/osg_jobs.csv
+    payload: datasets/osg_jobs/osg_jobs.csv
     timestamp_col: 13
   chameleon_requests:
     payload: datasets/user_requests/lease_info.csv

@@ -15,7 +15,7 @@ def init_connection():
     params = (pika.ConnectionParameters(
         host=connect_info['host'],
         heartbeat=0,
-        blocked_connection_timeout=0,
+        # blocked_connection_timeout=0,
         credentials=pika.credentials.PlainCredentials(username=connect_info['username'], password=connect_info['password'], erase_on_connect=True),
         connection_attempts=10, retry_delay=1)
     )
@@ -46,13 +46,14 @@ def emit_timeseries(exchange, routing_key, payload, timestamp_col, scale_ratio):
         for index, row in df.iterrows():
             if last_send_at:
                 sleep_sec = (pd.to_datetime(row[timestamp_col_name]) - pd.to_datetime(last_send_at)).total_seconds()/scale_ratio
-                time.sleep(sleep_sec)
+                sleep(sleep_sec)
+                
             channel.basic_publish(
                 exchange=exchange,
                 routing_key=routing_key,
                 body=row.to_json(),
-                properties=pika.BasicProperties(delivery_mode=2, headers={'key': routing_key}),
-                mandatory=True
+                properties=pika.BasicProperties(delivery_mode=1, headers={'key': routing_key}),
+                # mandatory=True
             )
             last_send_at = row[timestamp_col_name]
     print('%s done' % payload)
@@ -66,6 +67,7 @@ def emit_timeseries(exchange, routing_key, payload, timestamp_col, scale_ratio):
 def consume(exchange, queue, binding_key, callback, consume_type='push'):
     connection = init_connection()
     channel = connection.channel()
+    channel.basic_qos(prefetch_count=1)
     channel.queue_bind(exchange=exchange, queue=queue, routing_key=binding_key)
     try:
         if consume_type == 'push':

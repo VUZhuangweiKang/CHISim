@@ -28,7 +28,7 @@ if __name__ == '__main__':
         
         queues = ['internal_queue', 'user_requests_queue', 'osg_jobs_queue', 'machine_events_queue']
         for q in queues:
-            gm_channel.queue_declare(q)
+            gm_channel.queue_declare(q, durable=True)
         
     # send hearbeats periodically to maintain activiness of consumer connections
     while True:
