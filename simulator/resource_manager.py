@@ -40,10 +40,10 @@ monitor = Monitor()
 @app.route('/acquire_nodes', methods=['POST'])
 def acquire_nodes():
     global rm_channel, dbs_connection
-    if config['simulation']['enable_monitor']:
-        monitor.measure_rsrc()
     request_data = request.get_json()
     if request_data['pool'] == 'chameleon':
+        monitor.measure_rsrc()
+
         ch_node_cnt = 0
         osg_node_cnt = 0
         if request_data['node_cnt'] <= 0:
@@ -74,24 +74,21 @@ def acquire_nodes():
             osg_nodes = pd.DataFrame(list(osg_nodes))
             if osg_nodes.shape[0] > 0:
 
-                # Term policy 1: random
-                # osg_nodes = shuffle(osg_nodes) 
-
-                # Term policy 2: least use resources
-                # osg_nodes.sort_values(by=['free_cpus'], inplace=True, ascending=False)
-
-                # Term policy 3: most-recent deployed
-                # osg_nodes.sort_values(by=['ready_for_osg'], inplace=True, ascending=False)
-
-                # Term policy 4: smallest resubmission
-                resubmissions = []
-                for bf in osg_nodes['backfill']:
-                    count = 0
-                    for job in bf:
-                        count += job['ResubmitCount']
-                    resubmissions.append(count)
-                osg_nodes['resubmits'] = resubmissions
-                osg_nodes.sort_values(by=['resubmits'], inplace=True)
+                if config['simulation']['termination_policy'] == 'random':
+                    osg_nodes = shuffle(osg_nodes) 
+                elif config['simulation']['termination_policy'] == 'least_core':
+                    osg_nodes.sort_values(by=['free_cpus'], inplace=True, ascending=False)
+                elif config['simulation']['termination_policy'] == 'recent_deployed':
+                    osg_nodes.sort_values(by=['ready_for_osg'], inplace=True, ascending=False)
+                elif config['simulation']['termination_policy'] == 'least_resubmit':
+                    resubmissions = []
+                    for bf in osg_nodes['backfill']:
+                        count = 0
+                        for job in bf:
+                            count += job['ResubmitCount']
+                        resubmissions.append(count)
+                    osg_nodes['resubmits'] = resubmissions
+                    osg_nodes.sort_values(by=['resubmits'], inplace=True)
 
 
                 osg_nodes = osg_nodes.iloc[:int(request_data['node_cnt'] - ch_node_cnt)]
@@ -106,7 +103,7 @@ def acquire_nodes():
             osg_jobs = []
             for _, row in osg_nodes.iterrows():
                 osg_jobs.extend(row['backfill'])
-            if config['simulation']['enable_ml']:
+            if config['simulation']['request_predictor'] == 'baseline':
                 ahead_time = OsgOverhead.AHEAD_NOTIFY()/scale_ratio
             else:
                 ahead_time = 0
@@ -165,10 +162,7 @@ def acquire_nodes():
 
 @app.route('/release_nodes', methods=['POST'])
 def release_nodes():
-    if config['simulation']['enable_monitor']:
-        monitor.measure_rsrc()
     with lock:
-        global completed_leases
         request_data = request.get_json()
         agg_body = [
             {"$match": { "node_type": request_data['node_type'], "pool": "chameleon", "status": "inuse" }},
@@ -179,11 +173,7 @@ def release_nodes():
         # print(inuse_nodes.shape[0], request_data['node_cnt'])
         if inuse_nodes.shape[0] == request_data['node_cnt']:
             result = resource_pool.update_many({"HOST_NAME (PHYSICAL)": {"$in": inuse_nodes["HOST_NAME (PHYSICAL)"].to_list()}}, {"$set": {"status": "free", "pool": 'chameleon'}})
-            if config['simulation']['enable_monitor']:
-                monitor.measure_rsrc()
-                monitor.monitor_chameleon(completed_leases)
             if result.modified_count == request_data['node_cnt']:
-                completed_leases += 1
                 return 'OK', 200
             else:
                 logger.error('chameleon: release_nodes %d > inuse_nodes %d' % (result.modified_count, inuse_nodes.shape[0]))
@@ -274,7 +264,6 @@ if __name__ == '__main__':
     resource_pool.create_index('HOST_NAME (PHYSICAL)')
 
     scale_ratio = config['simulation']['scale_ratio']
-    completed_leases = 0
     with open('hardware.json') as f:
         hardware_profile = json.load(f)
     dbs_connection = dbs.init_connection()

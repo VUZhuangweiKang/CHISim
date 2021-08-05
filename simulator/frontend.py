@@ -66,20 +66,24 @@ def start_lease(usr_request):
             payload = {'node_type': usr_request['node_type'], 'node_cnt': usr_request['node_cnt'], 'pool': 'chameleon'}
             response = requests.post(url='%s/acquire_nodes' % rsrc_mgr_url, json=payload)
             rc = response.status_code
-            if rc == 200 and not config['simulation']['enable_ml']:
+            if rc == 200 and config['simulation']['request_predictor'] == 'baseline':
                 imm_term += response.json()['osg_pool']
 
-        if config['simulation']['enable_ml']:
+        if config['simulation']['request_predictor'] != 'baseline':
             make_prediction()
     if rc != 200:
         logger.info('failed to deploy: %s' % usr_request['lease_id'])
-    if config['simulation']['enable_monitor']:
-        monitor.monitor_terminates(unuse_term, succ_term, imm_term)
+   
+    monitor.monitor_terminates(unuse_term, succ_term, imm_term)
 
 
 def stop_lease(usr_request):
+    global completed_leases
     payload = {'node_type': usr_request['node_type'], 'node_cnt': usr_request['node_cnt']}
-    requests.post(url='%s/release_nodes' % rsrc_mgr_url, json=payload)
+    resp = requests.post(url='%s/release_nodes' % rsrc_mgr_url, json=payload)
+    if resp.status_code == 200:
+        completed_leases += 1
+        monitor.monitor_chameleon(completed_leases)
 
 
 def process_usr_requests(ch, method, properties, body):
@@ -122,27 +126,21 @@ def make_prediction():
             unuse_term += 0
             succ_term += osg_pool_nodes
 
-        ## ========== lstm 
-        smooth_rsw = smoother.smooth(rsw['node_cnt'].to_list()).smooth_data.squeeze()
-        df = scale(np.array(smooth_rsw)[:int(sw_len/fs_len)], min_, max_).reshape(-1, 1)
-        df = np.array([df[:, 0]])
-        df = np.reshape(df, (df.shape[0], 1, df.shape[1]))
-        pred_requests = forecaster.predict(df)
-        pred_requests = np.floor(inverse_scale(pred_requests, min_, max_))
-        print(pred_requests)
-
-        ## ========== moving average
-        # pred_requests = [rsw['node_cnt'].mean()]
-
-        ## ========== moving median
-        # pred_requests = [rsw['node_cnt'].median()]
+        if config['simulation']['request_predictor'] == 'lstm':
+            smooth_rsw = smoother.smooth(rsw['node_cnt'].to_list()).smooth_data.squeeze()
+            df = scale(np.array(smooth_rsw)[:int(sw_len/fs_len)], min_, max_).reshape(-1, 1)
+            df = np.array([df[:, 0]])
+            df = np.reshape(df, (df.shape[0], 1, df.shape[1]))
+            pred_requests = forecaster.predict(df)
+            pred_requests = np.floor(inverse_scale(pred_requests, min_, max_))
+        elif config['simulation']['request_predictor'] == 'rolling_mean':
+            pred_requests = [rsw['node_cnt'].mean()]
+        elif config['simulation']['request_predictor'] == 'rolling_median':
+            pred_requests = [rsw['node_cnt'].median()]
         
         if len(prediction_window) > 0:
             logger.info('pred_error: %d, pred_requests: %d' % (prediction_window[0]['node_cnt'], pred_requests[0]))
             prediction_window.pop(0)
-
-        if config['simulation']['enable_monitor']:
-            monitor.monitor_terminates(unuse_term, succ_term, imm_term)
 
         osg_pool_nodes = 0
         for preq in pred_requests:
@@ -248,12 +246,13 @@ if __name__ == '__main__':
     slide_window = []
     prediction_window = []
     osg_pool_nodes = 0
+    completed_leases = 0
     min_ = -4.809728156405064
     max_ = 41.34242146710831
     predicted_rsw = pd.read_csv('predicted_rsw.csv')
     pri = 0
 
-    if config['simulation']['enable_ml']:
+    if config['simulation']['request_predictor'] != 'baseline':
         forecaster = keras.models.load_model('forecaster.h5', compile=False)
         with open('smoother.pkl', 'rb') as f:
             smoother = pickle.load(f)
@@ -272,7 +271,7 @@ if __name__ == '__main__':
     thread1.start()
     
     while True:
-        if frc_params['retrain']['enabled'] and config['simulation']['enable_ml']:
+        if frc_params['retrain']['enabled'] and config['simulation']['request_predictor'] != 'baseline':
             query_str = 'SELECT COUNT(lease_id) AS count FROM on_demand'
             query_results = influx_client.query(query_str)
             if 'on_demand' in query_results:

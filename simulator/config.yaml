@@ -1,12 +1,12 @@
 ---
 simulation:
+  termination_policy: recent_deployed  # ['random', 'least_core', 'least_resubmit', 'recent_deployed']
+  request_predictor: rolling_median  # ['baseline', 'rolling_mean', 'rolling_median', 'lstm']
   scale_ratio: 10800
   credential:
     username: chi-sim
     password: chi-sim
-  enable_osg: no
-  enable_ml: no
-  enable_monitor: yes
+  enable_osg: yes
 
 framework:
   global_mgr:

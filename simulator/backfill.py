@@ -129,8 +129,7 @@ def stop_job_cb(action_date, osg_job):
                 "$inc": {"TotalCost": compute_cost(now-osg_job['JobSimStartDate'], osg_job)}}
         )
         del running_job_dict[osg_job['GlobalJobId']]
-        if config['simulation']['enable_monitor']:
-            monitor.monitor_osg_jobs(len(running_job_dict), len(waiting_queue), completed_job_count, terminate_job_count)
+        monitor.monitor_osg_jobs(len(running_job_dict), len(waiting_queue), completed_job_count, terminate_job_count)
 
 
 def stop_job(callback):
