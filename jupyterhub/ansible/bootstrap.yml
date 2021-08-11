@@ -1,0 +1,79 @@
+---
+- hosts: jupyterhub
+  roles:
+    - geerlingguy.pip
+    - geerlingguy.docker
+  vars:
+    - pip_install_packages:
+      - docker
+      - docker-compose
+  tasks:
+    - name: Generate JupyterHub session key.
+      block:
+      - shell: openssl rand -base64 32 >/srv/jupyterhub/crypt_key
+        args:
+          creates: /srv/jupyterhub/crypt_key
+      - lineinfile:
+          path: /etc/profile.d/jupyterhub.sh
+          create: yes
+          regexp: 'JUPYTERHUB_CRYPT_KEY='
+          line: "export JUPYTERHUB_CRYPT_KEY=$(</srv/jupyterhub/crypt_key)"
+          
+    - name: Generate JupyterHub cookie secret
+      shell: openssl rand -hex 32 > /srv/jupyterhub/jupyterhub_cookie_secret
+      args:
+        creates: /srv/jupyterhub/jupyterhub_cookie_secret
+
+    - name: Fetch vendor data from Chameleon.
+      uri:
+        url: http://169.254.169.254/openstack/latest/vendor_data2.json
+      register: vendor_data
+
+    - name: Authenticate with Docker registry.
+      docker_login:
+        registry: docker.chameleoncloud.org
+        username: registry
+        password: kaQBdG9PRwlpTzknnhfGmvPf
+    - name: Pull Docker images.
+      docker_image:
+        name: "{{ item }}"
+        source: pull
+        force_source: yes
+      loop:
+        - nginx:mainline
+        - docker.chameleoncloud.org/jupyterhub-user:latest
+
+    - name: Install certbot
+      pip:
+        name: certbot
+        executable: pip3
+    - name: Set fact for certificate domain.
+      set_fact:
+        letsencrypt_domain: "chi-dyn-{{ floating_ip | replace('.', '-') }}.{{ vendor_data.json.chameleon.site }}.chameleoncloud.org"
+        letsencrypt_email: "{{ email_address }}"
+    - name: Set fact for domain storage paths.
+      set_fact:
+        letsencrypt_certpath: "/etc/letsencrypt/live/{{ letsencrypt_domain }}"
+        nginx_certpath: /srv/jupyterhub/nginx
+    - name: Generate certificate.
+      command: >
+        certbot certonly --non-interactive \
+          --standalone \
+          -m {{ letsencrypt_email }} --agree-tos \
+          --domain {{ letsencrypt_domain }}
+      args:
+        creates: "{{ letsencrypt_certpath }}/cert.pem"
+    - name: Copy certificate and key.
+      block:
+        - command: "cp {{ letsencrypt_certpath }}/cert.pem {{ nginx_certpath }}/default.crt"
+          args:
+            creates: "{{ nginx_certpath }}/default.crt"
+        - command: "cp {{ letsencrypt_certpath }}/privkey.pem {{ nginx_certpath }}/default.key"
+          args:
+            creates: "{{ nginx_certpath }}/default.key"
+    - name: Write FQDN to local file
+      copy:
+        content: "{{ letsencrypt_domain }}"
+        dest: /etc/ansible/.letsencrypt_domain
+      delegate_to: localhost
+      become: yes

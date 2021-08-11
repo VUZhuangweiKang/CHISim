@@ -1,0 +1,41 @@
+version: "3.3"
+
+services:
+
+  nginx:
+    restart: always
+    image: nginx:mainline
+    container_name: nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - "./nginx:/etc/nginx:ro"
+ 
+  hub:
+    restart: always
+    build:
+      context: .
+      dockerfile: jupyterhub.Dockerfile
+    container_name: jupyterhub
+    expose:
+      - "8000"
+    volumes:
+      # Bind Docker socket on the host so we can connect to the daemon from
+      # within the container
+      - "/var/run/docker.sock:/var/run/docker.sock:rw"
+      - "./jupyterhub_config.py:/srv/jupyterhub/jupyterhub_config.py:ro"
+      - "./db:/srv/jupyterhub/db:rw"
+    networks:
+      - default
+      - containernet
+    environment:
+      # All containers will join this network
+      DOCKER_NETWORK_NAME: jupyterhub_containernet
+      # Encrytion key for JupyterHub authentication state
+      JUPYTERHUB_CRYPT_KEY: ${JUPYTERHUB_CRYPT_KEY}
+
+networks:
+    default:
+    containernet:
+        attachable: true
