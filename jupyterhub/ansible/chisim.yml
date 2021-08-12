@@ -9,6 +9,11 @@
   - name: install grafana
     ansible.builtin.shell:
       cmd: sh CHISim/jupyterhub/ansible/chisim-deploy/grafana.sh
+  - name: enable grafana port
+    community.general.ufw:
+      rule: allow
+      port: '3000'
+      proto: tcp
   - name: install influxdb
     ansible.builtin.shell:
       cmd: sh CHISim/jupyterhub/ansible/chisim-deploy/influxdb.sh
