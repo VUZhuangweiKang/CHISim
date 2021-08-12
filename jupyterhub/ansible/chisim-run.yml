@@ -1,0 +1,23 @@
+---
+- hosts: jupyterhub
+  tasks:
+  - name: start global_manager
+    ansible.builtin.shell:
+      chdir: /home/cc/Chameleon-OSG/simulator/
+      cmd: python3 global_manager.py &
+  - name: start resource_manager
+    ansible.builtin.shell:
+      chdir: /home/cc/Chameleon-OSG/simulator/
+      cmd: python3 resource_manager.py &
+  - name: start frontend
+    ansible.builtin.shell:
+      chdir: /home/cc/Chameleon-OSG/simulator/
+      cmd: python3 frontend.py &
+  - name: start backfill
+    ansible.builtin.shell:
+      chdir: /home/cc/Chameleon-OSG/simulator/
+      cmd: python3 backfill.py &
+  - name: start workload
+    ansible.builtin.shell:
+      chdir: /home/cc/Chameleon-OSG/simulator/
+      cmd: python3 workload.py &
