@@ -4,8 +4,8 @@
   tasks:
   - name: clone CHISim repository
     ansible.builtin.git:
-      repo: git@github.com:VUZhuangweiKang/CHISim.git
-      dest: /home/cc
+      repo: https://github.com/VUZhuangweiKang/CHISim.git
+      dest: /home/cc/CHISim
   - name: install grafana
     ansible.builtin.shell:
       cmd: sh CHISim/jupyterhub/ansible/chisim-deploy/grafana.sh
@@ -17,9 +17,9 @@
       cmd: sh CHISim/jupyterhub/ansible/chisim-deploy/rabbitmq.sh
   - name: install mongodb
     ansible.builtin.shell:
-      cmd: sh CHISim/jupyterhub/ansible/chisim-deploy/mongodb
+      cmd: sh CHISim/jupyterhub/ansible/chisim-deploy/mongodb.sh
   - name: add mongodb user
-    community.mongodb.mongodb_user:
+    mongodb_user:
       database: admin
       user: chi-sim
       password: chi-sim
@@ -30,11 +30,13 @@
         - { role: "dbAdminAnyDatabase",   db: "admin" }
   - name: update mongodb config file
     blockinfile:
-    dest: /etc/mongod.conf
-    block: |
-    security:
-      authorization: enabled
-    backup: yes
+      dest: /etc/mongod.conf
+      block: |
+        security:
+          authorization: enabled
   - name: restart mongodb
     ansible.builtin.shell:
-      cmd: sudo systemctl restart mongod
+      cmd: systemctl restart mongod
+  - name: install CHISim python depedencies
+    pip:
+      requirements: /home/cc/CHISim/requirements.txt
