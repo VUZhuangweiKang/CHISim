@@ -1,0 +1,40 @@
+---
+- hosts: jupyterhub
+  become: yes
+  tasks:
+  - name: clone CHISim repository
+    ansible.builtin.git:
+      repo: git@github.com:VUZhuangweiKang/CHISim.git
+      dest: /home/cc
+  - name: install grafana
+    ansible.builtin.shell:
+      cmd: sh CHISim/jupyterhub/ansible/chisim-deploy/grafana.sh
+  - name: install influxdb
+    ansible.builtin.shell:
+      cmd: sh CHISim/jupyterhub/ansible/chisim-deploy/influxdb.sh
+  - name: install rabbitmq
+    ansible.builtin.shell:
+      cmd: sh CHISim/jupyterhub/ansible/chisim-deploy/rabbitmq.sh
+  - name: install mongodb
+    ansible.builtin.shell:
+      cmd: sh CHISim/jupyterhub/ansible/chisim-deploy/mongodb
+  - name: add mongodb user
+    community.mongodb.mongodb_user:
+      database: admin
+      user: chi-sim
+      password: chi-sim
+      state: present
+      roles:
+        - { role: "userAdminAnyDatabase", db: "admin" }
+        - { role: "readWriteAnyDatabase", db: "admin" }
+        - { role: "dbAdminAnyDatabase",   db: "admin" }
+  - name: update mongodb config file
+    blockinfile:
+    dest: /etc/mongod.conf
+    block: |
+    security:
+      authorization: enabled
+    backup: yes
+  - name: restart mongodb
+    ansible.builtin.shell:
+      cmd: sudo systemctl restart mongod
