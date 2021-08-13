@@ -1,9 +1,0 @@
----
-- hosts: jupyterhub
-  become: yes
-  tasks:
-  - name: configure CHISim
-    ansible.builtin.copy:
-      src: ../exp-config.yaml
-      dest: /home/cc/CHISim/simulator/config.yaml
-    

@@ -1,7 +1,0 @@
----
-- hosts: jupyterhub
-  become: yes
-  tasks:
-  - name: shutdown experiments
-    ansible.builtin.shell:
-      cmd: pgrep python3 | xargs kill -9
