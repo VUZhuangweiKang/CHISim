@@ -25,7 +25,7 @@
   "links": [],
   "panels": [
     {
-      "datasource": null,
+      "datasource": "datasource-influxdb",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -190,7 +190,7 @@
       "type": "stat"
     },
     {
-      "datasource": null,
+      "datasource": "datasource-influxdb",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -377,7 +377,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": null,
+      "datasource": "datasource-influxdb",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -601,7 +601,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": null,
+      "datasource": "datasource-influxdb",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -788,7 +788,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": null,
+      "datasource": "datasource-influxdb",
       "fieldConfig": {
         "defaults": {
           "color": {

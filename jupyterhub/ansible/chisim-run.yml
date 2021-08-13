@@ -1,23 +1,17 @@
 ---
 - hosts: jupyterhub
   tasks:
-  - name: start global_manager
-    ansible.builtin.shell:
+  - name: start experiment
+    async: 1000
+    poll: 0
+    shell: "{{ item }}"
+    args:
       chdir: /home/cc/CHISim/simulator/
-      cmd: python3 global_manager.py &
-  - name: start resource_manager
-    ansible.builtin.shell:
-      chdir: /home/cc/CHISim/simulator/
-      cmd: python3 resource_manager.py &
-  - name: start frontend
-    ansible.builtin.shell:
-      chdir: /home/cc/CHISim/simulator/
-      cmd: python3 frontend.py &
-  - name: start backfill
-    ansible.builtin.shell:
-      chdir: /home/cc/CHISim/simulator/
-      cmd: python3 backfill.py &
-  - name: start workload
-    ansible.builtin.shell:
-      chdir: /home/cc/CHISim/simulator/
-      cmd: python3 workload.py &
+    with_items:
+      -  python3 global_manager.py 
+      -  sleep 20
+      -  python3 resource_manager.py
+      -  python3 frontend.py
+      -  python3 backfill.py
+      -  python3 workload.py
+    register: experiment

@@ -1,12 +1,10 @@
 ---
 - hosts: jupyterhub
-  become: yes
-  connection: local
   tasks:
   - name: Create Datasource
     community.grafana.grafana_datasource:
       name: "datasource-influxdb"
-      grafana_url: "http://129.114.109.238:3000"
+      grafana_url: "http://{{ floating_ip }}:3000"
       grafana_user: "admin"
       grafana_password: "admin"
       ds_type: "influxdb"
@@ -19,8 +17,10 @@
 
   - name: Import Grafana dashboard
     community.grafana.grafana_dashboard:
-      grafana_url: "http://129.114.109.238:3000"
+      grafana_url: "http://{{ floating_ip }}:3000"
+      grafana_user: "admin"
+      grafana_password: "admin"
       state: present
       commit_message: Updated by ansible
       overwrite: yes
-      path: /home/cc/CHISim/jupyterhub/ansible/chisim-deploy/grafana-dashboard.json
+      path: "/home/cc/CHISim/jupyterhub/ansible/chisim-deploy/grafana-dashboard.json"
