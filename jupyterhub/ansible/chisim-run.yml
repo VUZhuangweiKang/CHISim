@@ -8,10 +8,11 @@
     args:
       chdir: /home/cc/CHISim/simulator/
     with_items:
-      -  python3 global_manager.py 
-      -  sleep 20
-      -  python3 resource_manager.py
-      -  python3 frontend.py
-      -  python3 backfill.py
-      -  python3 workload.py
+      -  nohup python3 global_manager.py > global_manager.log &
+      -  nohup python3 resource_manager.py > resource_manager.log &
+      -  nohup python3 frontend.py > frontend.log &
+      -  nohup python3 backfill.py > backfill.log &
+      -  nohup python3 workload.py > workload.log &
     register: experiment
+
+  - debug: var=experiment.stdout_lines

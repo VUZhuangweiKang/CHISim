@@ -1,7 +1,7 @@
 ---
 simulation:
-  termination_policy: recent_deployed  # ['random', 'least_core', 'least_resubmit', 'recent_deployed']
-  request_predictor: rolling_median  # ['baseline', 'rolling_mean', 'rolling_median', 'lstm']
+  termination_policy: least_core  # ['random', 'least_core', 'least_resubmit', 'recent_deployed']
+  request_predictor: baseline  # ['baseline', 'rolling_mean', 'rolling_median', 'lstm']
   scale_ratio: 10800
   credential:
     username: chi-sim
