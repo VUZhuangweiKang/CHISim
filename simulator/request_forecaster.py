@@ -121,7 +121,7 @@ def train_model():
 
     model.compile(loss=loss_function, optimizer='adam')
     es = EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=5)
-    model.fit(trainX, trainY, epochs=30, batch_size=1, verbose=1, validation_split=0.2, callbacks=[es])
+    model.fit(trainX, trainY, epochs=30, batch_size=16, verbose=1, validation_split=0.2, callbacks=[es])
     model.save('forecaster.h5')
 
     """
